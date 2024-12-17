@@ -7,24 +7,24 @@ option(PARALLEL "Enable parallel AOSPRE" OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}") 
 
 add_executable(${PROJECT_NAME}
-    crsim_luts_mod.F
-    crsim_mod.F
-    extract_apar_wrf.F
-    kwm_date_utilities.F
-    module_access_wrf.F
-    module_aircraft.F
-    module_cfradial_output.F
-    module_configuration.F
-    module_crsim_wrapper.F
-    module_external_attitude.F
-    module_geometry.F
-    module_llxy.F
-    module_quicksort.F
-    module_scanning.F
-    module_timing_utilities.F
-    phys_param_mod.F
-    ReadConfParameters.F
-    wrf_var_mod.F
+    crsim_luts_mod.F90
+    crsim_mod.F90
+    extract_apar_wrf.F90
+    kwm_date_utilities.F90
+    module_access_wrf.F90
+    module_aircraft.F90
+    module_cfradial_output.F90
+    module_configuration.F90
+    module_crsim_wrapper.F90
+    module_external_attitude.F90
+    module_geometry.F90
+    module_llxy.F90
+    module_quicksort.F90
+    module_scanning.F90
+    module_timing_utilities.F90
+    phys_param_mod.F90
+    ReadConfParameters.F90
+    wrf_var_mod.F90
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -35,8 +35,8 @@ target_compile_options(${PROJECT_NAME} PRIVATE $<$<Fortran_COMPILER_ID:GNU>:-ffr
 
 # MacOS specific flags to prevent an "Illegal instruction" error from occurring.
 # TODO: Investigate why this is necessary.
-set_property(SOURCE "extract_apar_wrf.F" PROPERTY COMPILE_FLAGS $<$<PLATFORM_ID:Darwin>:"-Og">)
-set_property(SOURCE "extract_apar_wrf.F" PROPERTY COMPILE_FLAGS $<$<PLATFORM_ID:Darwin>:"-ftree-sra">)
+set_property(SOURCE "extract_apar_wrf.F90" PROPERTY COMPILE_FLAGS $<$<PLATFORM_ID:Darwin>:"-Og">)
+set_property(SOURCE "extract_apar_wrf.F90" PROPERTY COMPILE_FLAGS $<$<PLATFORM_ID:Darwin>:"-ftree-sra">)
 
 find_package(NetCDF REQUIRED COMPONENTS Fortran)
 target_link_libraries(${PROJECT_NAME} PRIVATE NetCDF::NetCDF_Fortran NetCDF::NetCDF_C)
@@ -58,7 +58,7 @@ if(PARALLEL)
     set(fortran_v10_or_later "$<VERSION_GREATER_EQUAL:$<Fortran_COMPILER_VERSION>,10>")
     set(mpi_earlier_than_v4 "$<VERSION_LESS:${MPI_Fortran_VERSION_MAJOR},4>")
     set(meets_requirements "$<AND:${is_gnu},${fortran_v10_or_later},${mpi_earlier_than_v4}>")
-    set_property(SOURCE "extract_apar_wrf.F" PROPERTY COMPILE_FLAGS $<${meets_requirements}:-fallow-argument-mismatch>)
+    set_property(SOURCE "extract_apar_wrf.F90" PROPERTY COMPILE_FLAGS $<${meets_requirements}:-fallow-argument-mismatch>)
 
     target_link_libraries(${PROJECT_NAME} PRIVATE MPI::MPI_Fortran)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _PARALLEL_)

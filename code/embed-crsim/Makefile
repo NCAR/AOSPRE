@@ -2,6 +2,7 @@
 SHELL=/bin/sh
 .SUFFIXES:	
 .SUFFIXES:	.F .o
+.SUFFIXES:  .F90 .o
 OBJS=	extract_apar_wrf.o \
 	module_cfradial_output.o \
 	kwm_date_utilities.o \
@@ -113,6 +114,9 @@ aospre:	$(OBJS)
 
 .F.o:
 	$(FC) -c $(FFLAGS) $(DEBUG) $(FCPPFLAGS) $*.F
+
+.F90.o:
+	$(FC) -c $(FFLAGS) $(DEBUG) $(FCPPFLAGS) $*.F90
 
 clean:
 	$(RM) *.o *.mod *~ $(CMD)

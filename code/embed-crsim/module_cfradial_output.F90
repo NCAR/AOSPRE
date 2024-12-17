@@ -106,59 +106,48 @@ module module_cfradial_output
       integer :: ngates
       integer :: sweep
 
-      ! Original version - static beamwidth that wasn't actually getting used
-      ! Edited by B. Klotz (11/29/23)
-
-      !real(kind=RKIND)    :: beamwidth_h
-      !real(kind=RKIND)    :: beamwidth_v
-
-      !
-      real(kind=RKIND)    :: fold_limit_lower
-      real(kind=RKIND)    :: fold_limit_upper
-      integer,           dimension(MAX_SWEEPS) :: sweep_number
-      character(len=32), dimension(MAX_SWEEPS) :: sweep_mode
-      real(kind=RKIND),              dimension(MAX_SWEEPS) :: fixed_angle
-      integer,           dimension(MAX_SWEEPS) :: sweep_start_ray_index
-      integer,           dimension(MAX_SWEEPS) :: sweep_end_ray_index
-      character(len=19) :: time_coverage_start
-      character(len=19) :: time_coverage_end
-      character(len=19) :: reference_time
-      integer           :: start_time_integer_seconds
-      real(kind=RKIND), dimension(MAX_RAYS)  :: time
-      real(kind=RKIND), dimension(MAX_NGATES) :: range
-      real(kind=RKIND), dimension(MAX_RAYS)  :: latitude
-      real(kind=RKIND), dimension(MAX_RAYS)  :: longitude
-      real(kind=RKIND), dimension(MAX_RAYS)  :: altitude
-      real(kind=RKIND), dimension(MAX_RAYS)  :: azimuth
-      real(kind=RKIND), dimension(MAX_RAYS)  :: elevation
-      integer, dimension(MAX_RAYS)  :: georefs_applied
-      real(kind=RKIND), dimension(MAX_RAYS)  :: heading
-      real(kind=RKIND), dimension(MAX_RAYS)  :: roll
-      real(kind=RKIND), dimension(MAX_RAYS)  :: pitch
-      real(kind=RKIND), dimension(MAX_RAYS)  :: drift
-      real(kind=RKIND), dimension(MAX_RAYS)  :: rotation
-      real(kind=RKIND), dimension(MAX_RAYS)  :: tilt
-
-      ! Part of edit above from 11/29/23 (B. Klotz)
-      real(kind=RKIND), dimension(MAX_RAYS)  :: beamwidth_h
-      real(kind=RKIND), dimension(MAX_RAYS)  :: beamwidth_v
-
-      ! End edit (B. Klotz, 11/29/23)
+      real(kind=RKIND)               :: fold_limit_lower
+      real(kind=RKIND)               :: fold_limit_upper
+      integer,           allocatable :: sweep_number(:)
+      character(len=32), allocatable :: sweep_mode(:)
+      real(kind=RKIND),  allocatable :: fixed_angle(:)
+      integer,           allocatable :: sweep_start_ray_index(:)
+      integer,           allocatable :: sweep_end_ray_index(:)
+      character(len=19)              :: time_coverage_start
+      character(len=19)              :: time_coverage_end
+      character(len=19)              :: reference_time
+      integer                        :: start_time_integer_seconds
+      real(kind=RKIND),  allocatable :: range(:)
+      real(kind=RKIND),  allocatable :: time(:)
+      real(kind=RKIND),  allocatable :: latitude(:)
+      real(kind=RKIND),  allocatable :: longitude(:)
+      real(kind=RKIND),  allocatable :: altitude(:)
+      real(kind=RKIND),  allocatable :: azimuth(:)
+      real(kind=RKIND),  allocatable :: elevation(:)
+      integer,           allocatable :: georefs_applied(:)
+      real(kind=RKIND),  allocatable :: heading(:)
+      real(kind=RKIND),  allocatable :: roll(:)
+      real(kind=RKIND),  allocatable :: pitch(:)
+      real(kind=RKIND),  allocatable :: drift(:)
+      real(kind=RKIND),  allocatable :: rotation(:)
+      real(kind=RKIND),  allocatable :: tilt(:)
+      real(kind=RKIND),  allocatable :: beamwidth_h(:)
+      real(kind=RKIND),  allocatable :: beamwidth_v(:)
 
       ! "instrument_parameters" meta_group
-      real(kind=RKIND), dimension(MAX_RAYS)  :: nyquist_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: unambiguous_range
+      real(kind=RKIND), allocatable :: nyquist_velocity(:)
+      real(kind=RKIND), allocatable :: unambiguous_range(:)
 
       ! "platform_velocity" meta_group
-      real(kind=RKIND), dimension(MAX_RAYS)  :: eastward_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: northward_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: vertical_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: eastward_wind
-      real(kind=RKIND), dimension(MAX_RAYS)  :: northward_wind
-      real(kind=RKIND), dimension(MAX_RAYS)  :: vertical_wind
-      real(kind=RKIND), dimension(MAX_RAYS)  :: heading_rate
-      real(kind=RKIND), dimension(MAX_RAYS)  :: roll_rate
-      real(kind=RKIND), dimension(MAX_RAYS)  :: pitch_rate
+      real(kind=RKIND), allocatable :: eastward_velocity(:)
+      real(kind=RKIND), allocatable :: northward_velocity(:)
+      real(kind=RKIND), allocatable :: vertical_velocity(:)
+      real(kind=RKIND), allocatable :: eastward_wind(:)
+      real(kind=RKIND), allocatable :: northward_wind(:)
+      real(kind=RKIND), allocatable :: vertical_wind(:)
+      real(kind=RKIND), allocatable :: heading_rate(:)
+      real(kind=RKIND), allocatable :: roll_rate(:)
+      real(kind=RKIND), allocatable :: pitch_rate(:)
 
       ! "geometry_correction" meta_group
       real(kind=RKIND) :: azimuth_correction = 0.0
@@ -179,9 +168,9 @@ module module_cfradial_output
       real(kind=RKIND) :: tilt_correction = 0.0
 
       ! other variables needed for each beam, but not necessarily output in the CFRadial files.
-      real(kind=RKIND), dimension(MAX_RAYS)  :: aircraft_xgrid
-      real(kind=RKIND), dimension(MAX_RAYS)  :: aircraft_ygrid
-      real(kind=RKIND), dimension(MAX_RAYS)  :: aircraft_z
+      real(kind=RKIND), allocatable :: aircraft_xgrid(:)
+      real(kind=RKIND), allocatable :: aircraft_ygrid(:)
+      real(kind=RKIND), allocatable :: aircraft_z(:)
 
     contains
       procedure :: initialize_new_field => volume_initialize_new_field
@@ -2268,6 +2257,42 @@ contains
     real(kind=RKIND), parameter :: badval = -1.E36
     type(volume_field_type), pointer :: ptr
     integer :: i
+
+    allocate(volume_initialize%sweep_number(MAX_SWEEPS))
+    allocate(volume_initialize%sweep_mode(MAX_SWEEPS))
+    allocate(volume_initialize%fixed_angle(MAX_SWEEPS))
+    allocate(volume_initialize%sweep_start_ray_index(MAX_SWEEPS))
+    allocate(volume_initialize%sweep_end_ray_index(MAX_SWEEPS))
+    allocate(volume_initialize%range(MAX_NGATES))
+    allocate(volume_initialize%time(MAX_RAYS))
+    allocate(volume_initialize%latitude(MAX_RAYS))
+    allocate(volume_initialize%longitude(MAX_RAYS))
+    allocate(volume_initialize%altitude(MAX_RAYS))
+    allocate(volume_initialize%azimuth(MAX_RAYS))
+    allocate(volume_initialize%elevation(MAX_RAYS))
+    allocate(volume_initialize%georefs_applied(MAX_RAYS))
+    allocate(volume_initialize%heading(MAX_RAYS))
+    allocate(volume_initialize%roll(MAX_RAYS))
+    allocate(volume_initialize%pitch(MAX_RAYS))
+    allocate(volume_initialize%drift(MAX_RAYS))
+    allocate(volume_initialize%rotation(MAX_RAYS))
+    allocate(volume_initialize%tilt(MAX_RAYS))
+    allocate(volume_initialize%beamwidth_h(MAX_RAYS))
+    allocate(volume_initialize%beamwidth_v(MAX_RAYS))
+    allocate(volume_initialize%nyquist_velocity(MAX_RAYS))
+    allocate(volume_initialize%unambiguous_range(MAX_RAYS))
+    allocate(volume_initialize%eastward_velocity(MAX_RAYS))
+    allocate(volume_initialize%northward_velocity(MAX_RAYS))
+    allocate(volume_initialize%vertical_velocity(MAX_RAYS))
+    allocate(volume_initialize%eastward_wind(MAX_RAYS))
+    allocate(volume_initialize%northward_wind(MAX_RAYS))
+    allocate(volume_initialize%vertical_wind(MAX_RAYS))
+    allocate(volume_initialize%heading_rate(MAX_RAYS))
+    allocate(volume_initialize%roll_rate(MAX_RAYS))
+    allocate(volume_initialize%pitch_rate(MAX_RAYS))
+    allocate(volume_initialize%aircraft_xgrid(MAX_RAYS))
+    allocate(volume_initialize%aircraft_ygrid(MAX_RAYS))
+    allocate(volume_initialize%aircraft_z(MAX_RAYS))
 
     ! write(*,'("VOLUME_INITIALIZE: address: ",I20)') loc(volume_initialize)
     volume_initialize%number = number

@@ -39,6 +39,7 @@ output_filename_format_string = '("supercell_",A,"_",A,".nc")'
 *integer*
 
 * time (seconds past model initialization time) to start the flight.
+* The model initialization time is the time of the model start, and not necessarily the time of the first model output. In WRF, model start time can be found using `ncdump -h /path/to/wrfout.nc | grep :SIMULATION_START_DATE`.
 ```
  leg_initial_time = 4500
 ```
@@ -47,7 +48,7 @@ output_filename_format_string = '("supercell_",A,"_",A,".nc")'
 ### **leg_time_seconds**
 *integer*
 
-* duration (in seconds) of the flight.
+* duration (in seconds) of the entire flight.
 ```
  leg_time_seconds = 300
 ```

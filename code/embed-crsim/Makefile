@@ -2,6 +2,7 @@
 SHELL=/bin/sh
 .SUFFIXES:	
 .SUFFIXES:	.F .o
+.SUFFIXES:	.F90 .o
 OBJS=	extract_apar_wrf.o \
 	module_cfradial_output.o \
 	kwm_date_utilities.o \
@@ -19,27 +20,29 @@ OBJS=	extract_apar_wrf.o \
 	crsim_luts_mod.o \
 	ReadConfParameters.o  \
 	module_configuration.o \
-	module_timing_utilities.o
+	module_timing_utilities.o \
+	module_ppro.o \
+	dualpol_op_mod.o
 
 #####  GNU  ###################################################################
-LD = gfortran
-FC = gfortran
-FORTRAN_FREEFORM = -ffree-form -ffree-line-length-none
-NETCDF_INC = $(NETCDF)/include
-NETCDF_LIB = $(NETCDF)/lib
-FFLAGS =  -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
-LDLIBS =	-L$(NETCDF_LIB) -lnetcdff
-DEBUG  = 	# -g -C -fbounds-check -O0
-
-#####  GNU + MPI  #############################################################
-# LD = mpif90 
-# FC = mpif90 -D_PARALLEL_
+# LD = gfortran
+# FC = gfortran
 # FORTRAN_FREEFORM = -ffree-form -ffree-line-length-none
 # NETCDF_INC = $(NETCDF)/include
 # NETCDF_LIB = $(NETCDF)/lib
-# FFLAGS = -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
-# LDLIBS = -L$(NETCDF_LIB) -lnetcdff
-# DEBUG  = # -g -C -fbounds-check -O0
+# FFLAGS =  -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
+# LDLIBS =	-L$(NETCDF_LIB) -lnetcdff
+# DEBUG  = 	 -g -C -fbounds-check -O0
+
+#####  GNU + MPI  #############################################################
+ LD = mpif90 
+ FC = mpif90 -D_PARALLEL_
+ FORTRAN_FREEFORM = -ffree-form -ffree-line-length-none
+ NETCDF_INC = $(NETCDF)/include
+ NETCDF_LIB = $(NETCDF)/lib
+ FFLAGS = -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
+ LDLIBS = -L$(NETCDF_LIB) -lnetcdff
+ DEBUG  =  -g -C -fbounds-check -O0
 
 #####  Intel  #################################################################
 # LD     = 	ifort
@@ -114,10 +117,14 @@ aospre:	$(OBJS)
 .F.o:
 	$(FC) -c $(FFLAGS) $(DEBUG) $(FCPPFLAGS) $*.F
 
+.F90.o:
+	$(FC) -c $(FFLAGS) $(DEBUG) $(FCPPFLAGS) $*.F90
+
 clean:
 	$(RM) *.o *.mod *~ $(CMD)
 #
 
+extract_apar_wrf.o : module_ppro.o
 extract_apar_wrf.o : module_cfradial_output.o
 extract_apar_wrf.o : module_access_wrf.o
 extract_apar_wrf.o : module_scanning.o
@@ -133,9 +140,9 @@ module_access_wrf.o: kwm_date_utilities.o
 module_access_wrf.o: module_configuration.o
 module_access_wrf.o: module_llxy.o
 module_access_wrf.o: module_scanning.o
-module_cfradial_output.o : kwm_date_utilities.o
-module_cfradial_output.o : module_llxy.o
-module_cfradial_output.o : module_configuration.o
+module_cfradial_output.o: kwm_date_utilities.o
+module_cfradial_output.o: module_llxy.o
+module_cfradial_output.o: module_configuration.o
 module_aircraft.o: module_llxy.o
 module_aircraft.o: module_timing_utilities.o
 module_aircraft.o: module_external_attitude.o
@@ -153,6 +160,10 @@ module_crsim_wrapper.o: crsim_luts_mod.o
 module_crsim_wrapper.o: module_cfradial_output.o
 module_crsim_wrapper.o: module_configuration.o
 module_crsim_wrapper.o: module_quicksort.o
+module_ppro.o: module_configuration.o
+module_ppro.o: module_cfradial_output.o
+module_ppro.o: phys_param_mod.o
+module_ppro.o: dualpol_op_mod.o
 module_quicksort.o: module_configuration.o
 module_quicksort.o: quicksort_inline.inc
 module_quicksort.o: quicksort_inline_index.inc

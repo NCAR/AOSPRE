@@ -19,8 +19,8 @@
  herky_jerky = .FALSE.
 
  bwtype = 0,
- ref_angle = 270,
-
+ ref_angle = 0,
+ rsimtype = 0,
 /
 
 &attitude_external_source

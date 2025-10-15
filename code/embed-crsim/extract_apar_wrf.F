@@ -6,6 +6,7 @@ program extract_apar
   use module_access_wrf, only : wrf_metadata_type
   use module_access_wrf, only : options_type
   use module_crsim_wrapper, only : crsim_wrapper
+  use module_ppro, only : ppro_wrapper
   use module_flightpath, only : aircraft_metadata_type
   use module_flightpath, only : flightpath_class
   use module_scanning,   only : scan_type
@@ -130,6 +131,7 @@ program extract_apar
   integer :: ipanel
   integer :: num_panels
   integer :: bwtype
+  integer :: rsimtype
 
   num_panels = command_argument_count()
   if (num_panels == 0) then
@@ -861,12 +863,18 @@ program extract_apar
       call timer_pause("RADVEL")
 
       !
-      !  Call CRSIM routines to compute radar moments etc. on our defined rays.
+      !  Call Radar Simulator routines to compute radar moments etc. on our defined rays.
       !
 
-      call timer_resume("CRSIM")
-      call crsim_wrapper(conf, volume)
-      call timer_pause("CRSIM")
+      call timer_resume("RSIM")
+      if ( options%rsimtype == 0 ) then
+         print *, 'Running Radar Simulator: CR-SIM'
+         call crsim_wrapper(conf, volume)
+      else if ( options%rsimtype == 1 ) then
+         print *, 'Running Radar Simulator: P-PRO'
+         call ppro_wrapper(volume)
+      endif
+      call timer_pause("RSIM")
 
       !
       ! Compute new velocity with fall velocites included
@@ -1005,7 +1013,7 @@ program extract_apar
       call timer_print("OTHER_INTERP", label="Total Other interp time (s):"       , percent_of=total_cpu_time)
       call timer_print("POSTSWEEP"   , label="Post sweep loop total time (s):"    , percent_of=total_cpu_time)
       call timer_print("RADVEL"      , label="Total radial velocity time (s):"    , percent_of=total_cpu_time)
-      call timer_print("CRSIM"       , label='Total crsim time (s):'              , percent_of=total_cpu_time)
+      call timer_print("RSIM"        , label='Total Radar Sim time (s):'          , percent_of=total_cpu_time)
       call timer_print("ATTENUATE"   , label="Total attenuate time (s):"          , percent_of=total_cpu_time)
       call timer_print("SNR"         , label="Total snr time (s):"                , percent_of=total_cpu_time)
       call timer_print("IPS"         , label="Total ips time (s):"                , percent_of=total_cpu_time)
@@ -1403,6 +1411,11 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
   !    2: Variable beamwidth
   integer :: bwtype
 
+  ! Determine which radar simulator to use. Valid values:
+  !    0: CR-SIM (Default)
+  !    1: P-PRO (Based on Zhang et al. 2021)
+  integer :: rsimtype
+
   ! Helicopter mode:  Aircraft is stationary with respect to the ground.
   logical :: helicopter
 
@@ -1416,7 +1429,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
        &            flight_level_coordinate,                                              &
        &            flight_waypoints_x, flight_waypoints_y, flight_waypoints_vert, heading, air_speed, &
        &            leg_initial_time, leg_time_seconds, conv_minute, &
-       &            bwtype, ref_angle, &
+       &            bwtype, ref_angle, rsimtype, &
        &            herky_jerky, helicopter, seed
 
   real(kind=RKIND) :: meters_between_gates
@@ -1480,6 +1493,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
   conv_minute = -9999
   bwtype = 0
   ref_angle = -1.E36
+  rsimtype = 0
   herky_jerky = .FALSE.
   helicopter = .FALSE.
   flight_waypoints_x    = -1.E36
@@ -1555,6 +1569,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
 !KWM  opts%fpar = fpar
   opts%bwtype = bwtype
   opts%ref_angle  = ref_angle
+  opts%rsimtype = rsimtype
   opts%herky_jerky = herky_jerky
   opts%helicopter = helicopter
 
@@ -1592,6 +1607,13 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
       write(*,'("Invalid namelist value bwtype = ''",I10,"''")') opts%bwtype
       stop
   case ( 0, 1, 2 )
+      ! Ok
+  end select
+
+  select case (opts%rsimtype)
+  case default
+      write(*,'("Invalid namelist value rsimtype = ''",I10,"''")') opts%rsimtype
+  case ( 0, 1 )
       ! Ok
   end select
 

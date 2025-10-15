@@ -19,6 +19,7 @@
 
  bwtype = 0,
  ref_angle = 270,
+ rsimtype = 0,
 
 /
 

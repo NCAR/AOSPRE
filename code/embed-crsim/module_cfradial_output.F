@@ -2437,6 +2437,7 @@ contains
             return
         endif
     enddo
+
     write(*,'("MODULE_CFRADIAL_OUTPUT:VOLUME_POINT_TO:  Field ", A, " not found.")') trim(name)
     stop
   end function volume_point_to
@@ -2460,11 +2461,12 @@ contains
     do while ( associated ( ptr%next ) ) 
         ptr => ptr%next
         if ( trim(ptr%field_name) == name ) then
+            print *, 'Field name = ', name
             data => ptr%data
             return
         endif
     enddo
-
+    print *,'Volume point to data'
     write(*,'("MODULE_CFRADIAL_OUTPUT:VOLUME_POINT_TO_DATA:  Field ", A, " not found.")') trim(name)
     stop
   end function volume_point_to_data
@@ -3050,42 +3052,42 @@ contains
         ! self%unambiguous_range(iray) = 71379.16
         GATE_LOOP : do igate = 1, self%ngates
 
-            if ( abs(velunf_noise_added(igate,iray)) > 9998 ) cycle GATE_LOOP
+            if ( abs(velunf_noise_added(igate,iray)) > 500 ) cycle GATE_LOOP
 
             vel(igate,iray) = velunf(igate,iray)
             vel_noise_added(igate,iray) = velunf_noise_added(igate,iray)! velunf(igate,iray)
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( vel(igate,iray) < self%fold_limit_upper ) exit
                 vel(igate,iray) = self%fold_limit_lower + (vel(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==20) then
                     print*, 'velunf = ', velunf(igate,iray)
                     stop "A) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( vel(igate,iray) > self%fold_limit_lower ) exit
                 vel(igate,iray) = self%fold_limit_upper + (vel(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==20) then
                     print*, 'velunf = ', velunf(igate,iray)
                     stop "B) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( vel_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 vel_noise_added(igate,iray) = self%fold_limit_lower + (vel_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==20) then
                     print*, 'velunf_noise_added = ', velunf_noise_added(igate,iray)
                     stop "C) Fold?"
                 endif
             enddo
             
-            do k = 1, 10
+            do k = 1, 20
                 if ( vel_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 vel_noise_added(igate,iray) = self%fold_limit_upper + (vel_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==20) then
                     print*, 'velunf_noise_added = ', velunf_noise_added(igate,iray)
                     stop "D) Fold?"
                 endif
@@ -3098,46 +3100,46 @@ contains
             veltruf_fvel(igate,iray) = veltru_fvel(igate,iray)
             veltruf_fvel_noise_added(igate,iray) = veltru_noise_added(igate,iray)
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( veltruf(igate,iray) < self%fold_limit_upper ) exit
                 veltruf(igate,iray) = self%fold_limit_lower + (veltruf(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==20) then
                     print*, 'veltru = ', veltru(igate,iray)
                     stop "C) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( veltruf(igate,iray) > self%fold_limit_lower ) exit
                 veltruf(igate,iray) = self%fold_limit_upper + (veltruf(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==20) then
                     print*, 'veltru = ', veltru(igate,iray)
                     stop "D) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( veltruf_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_noise_added(igate,iray) = self%fold_limit_lower + (veltruf_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==20) then
                     print*, 'veltru_noise_added = ', veltru_noise_added(igate,iray)
                     stop "E) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( veltruf_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 veltruf_noise_added(igate,iray) = self%fold_limit_upper + (veltruf_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==20) then
                     print*, 'veltru_noise_added = ', veltru_noise_added(igate,iray)
                     stop "F) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( veltruf_fvel(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_fvel(igate,iray) = self%fold_limit_lower + (veltruf_fvel(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==20) then
                     print*, 'veltru_fvel = ', veltru_fvel(igate,iray)
                     stop "G) Fold?"
                 endif
@@ -3152,19 +3154,19 @@ contains
             !    endif
             !enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( veltruf_fvel_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_fvel_noise_added(igate,iray) = self%fold_limit_lower + (veltruf_fvel_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==20) then
                     print*, 'veltru_fvel_noise_added = ', veltru_fvel_noise_added(igate,iray)
                     stop "I) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, 20
                 if ( veltruf_fvel_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 veltruf_fvel_noise_added(igate,iray) = self%fold_limit_upper + (veltruf_fvel_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==20) then
                     print*, 'veltru_fvel_noise_added = ', veltru_fvel_noise_added(igate,iray)
                     stop "J) Fold?"
                 endif
@@ -3261,6 +3263,7 @@ contains
             if (Adp(igate,iray) > -999) then
                 sumattD = sumattD + (Adp(igate,iray)*1.E-3*meters_between_gates)
             endif
+            !print *,'Zhh, Zhh_attenuated = ',zhh(igate,iray),zhh_attenuated(igate,iray)
         enddo GATE_LOOP
     enddo RAY_LOOP
     
@@ -3291,11 +3294,13 @@ contains
         do igate = 1, self%ngates
             if (Zhh_attenuated(igate,iray) > -9999) then
                 SNR_zhh(igate,iray) = Zhh_attenuated(igate,iray) - ( MDS1KM + 20.0*log10( 1.E-3 * self%range(igate) ) )
+                !print *, 'Zhh, Zhh_att, SNR_Zhh = ',Zhh_attenuated(igate,iray),SNR_Zhh(igate,iray)
             else
                 SNR_zhh(igate,iray) = -9999.0
             endif
             if (Zvv_attenuated(igate,iray) > -9999) then
                 SNR_zvv(igate,iray) = Zvv_attenuated(igate,iray) - ( MDS1KM + 20.0*log10( 1.E-3 * self%range(igate) ) )
+                !print *, 'Zvv_att, SNR_Zvv = ',Zvv_attenuated(igate,iray),SNR_Zvv(igate,iray)
             else
                 SNR_zvv(igate,iray) = -9999.0
             endif
@@ -3388,8 +3393,14 @@ contains
                 stdv_Zhh(igate,iray) = 10*log10(1.0+sqrt(YU3_zhh))
                 stdv_Zvv(igate,iray) = 10*log10(1.0+sqrt(YU3_zvv))
                 stdv_Vel(igate,iray) = sqrt(YU4_zhh)
+
+                
+
+                if (abs(stdv_Vel(igate,iray)) > 200) then
+                   stdv_Vel(igate,iray) = -9999.
+                endif
                 !print *, "IGATE, IRAY = ", igate, iray
-                !print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
+                print *, "SWtot, rho, SNR_zhh_lin, YU3_zhh, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, SNR_zhh_lin, YU3_zhh, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
             endif
         enddo
     enddo

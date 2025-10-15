@@ -32,6 +32,7 @@ module module_access_wrf
                                   !     2 = applies the variable beamwidth to the calculation
       integer :: conv_minute  ! conversion of XTIME to seconds as nessary
       real(kind=RKIND) :: ref_angle  ! Reference angle for the aircraft fuselage and panel frame of reference; Sides are either 270 or 90, top is 0 and bottom is 180
+      integer :: rsimtype ! choose which radar simulator to use, 0 = CR-SIM (Default), 1 = P-PRO
       logical :: time_evolution
       logical :: helicopter
       logical :: herky_jerky

@@ -137,6 +137,10 @@ module module_cfradial_output
       ! "instrument_parameters" meta_group
       real(kind=RKIND), allocatable :: nyquist_velocity(:)
       real(kind=RKIND), allocatable :: unambiguous_range(:)
+      real(kind=RKIND), allocatable :: pulse_repetition_time(:)
+      integer,          allocatable :: pulses_per_pulse_set(:)
+      integer,          allocatable :: revisits_per_acquisition_time(:)
+      integer,          allocatable :: beams_per_acquisition_time(:)
 
       ! "platform_velocity" meta_group
       real(kind=RKIND), allocatable :: eastward_velocity(:)
@@ -230,6 +234,10 @@ module module_cfradial_output
       ! "instrument_parameters" meta_group
       integer :: nyquist_velocity_varid
       integer :: unambiguous_range_varid
+      integer :: pulse_repetition_time_varid
+      integer :: pulses_per_pulse_set_varid
+      integer :: revisits_per_acquisition_time_varid
+      integer :: beams_per_acquisition_time_varid
 
       ! "geometry_correction" meta_group
       integer :: azimuth_correction_varid
@@ -689,6 +697,34 @@ contains
     ierr = nf90_put_att ( self%ncid, self%unambiguous_range_varid, "long_name", "nyquist_velocity" )
     ierr = nf90_put_att ( self%ncid, self%unambiguous_range_varid, "units", "meters" )
     ierr = nf90_put_att ( self%ncid, self%unambiguous_range_varid, "_FillValue", -9999.0_4 )
+
+    ierr = nf90_def_var ( self%ncid, "prt", NF90_FLOAT, dimids=(/time_dimid/), varid=self%pulse_repetition_time_varid, &
+         &                deflate_level=2, shuffle=.true. )
+    ierr = nf90_put_att ( self%ncid, self%pulse_repetition_time_varid, "meta_group", "instrument_parameters" )
+    ierr = nf90_put_att ( self%ncid, self%pulse_repetition_time_varid, "long_name", "pulse_repetition_time" )
+    ierr = nf90_put_att ( self%ncid, self%pulse_repetition_time_varid, "units", "seconds" )
+    ierr = nf90_put_att ( self%ncid, self%pulse_repetition_time_varid, "_FillValue", -9999.0_4 )
+
+    ierr = nf90_def_var ( self%ncid, "pulses_per_visit", NF90_INT, dimids=(/time_dimid/), varid=self%pulses_per_pulse_set_varid, &
+         &                deflate_level=2, shuffle=.true. )
+    ierr = nf90_put_att ( self%ncid, self%pulses_per_pulse_set_varid, "meta_group", "instrument_parameters" )
+    ierr = nf90_put_att ( self%ncid, self%pulses_per_pulse_set_varid, "long_name", "independent_pulse_sampling_pulses_per_pulse_set" )
+    ierr = nf90_put_att ( self%ncid, self%pulses_per_pulse_set_varid, "units", "" )
+    ierr = nf90_put_att ( self%ncid, self%pulses_per_pulse_set_varid, "_FillValue", -9999 )
+
+    ierr = nf90_def_var ( self%ncid, "visits_per_dwell", NF90_INT, dimids=(/time_dimid/), varid=self%revisits_per_acquisition_time_varid, &
+         &                deflate_level=2, shuffle=.true. )
+    ierr = nf90_put_att ( self%ncid, self%revisits_per_acquisition_time_varid, "meta_group", "instrument_parameters" )
+    ierr = nf90_put_att ( self%ncid, self%revisits_per_acquisition_time_varid, "long_name", "independent_pulse_sampling_revisits_per_acquisition_time" )
+    ierr = nf90_put_att ( self%ncid, self%revisits_per_acquisition_time_varid, "units", "" )
+    ierr = nf90_put_att ( self%ncid, self%revisits_per_acquisition_time_varid, "_FillValue", -9999 )
+
+    ierr = nf90_def_var ( self%ncid, "beams_per_dwell", NF90_INT, dimids=(/time_dimid/), varid=self%beams_per_acquisition_time_varid, &
+         &                deflate_level=2, shuffle=.true. )
+    ierr = nf90_put_att ( self%ncid, self%beams_per_acquisition_time_varid, "meta_group", "instrument_parameters" )
+    ierr = nf90_put_att ( self%ncid, self%beams_per_acquisition_time_varid, "long_name", "independent_pulse_sampling_beams_per_acquisition_time" )
+    ierr = nf90_put_att ( self%ncid, self%beams_per_acquisition_time_varid, "units", "" )
+    ierr = nf90_put_att ( self%ncid, self%beams_per_acquisition_time_varid, "_FillValue", -9999 )
 
     !
     !  geometry_correction meta_group
@@ -1773,6 +1809,18 @@ contains
     ierr = nf90_put_var(self%ncid, self%unambiguous_range_varid, volume%unambiguous_range(1:volume%nrays))
     call error_handler(ierr, "Problem put unambiguous_range")
 
+    ierr = nf90_put_var(self%ncid, self%pulse_repetition_time_varid, volume%pulse_repetition_time(1:volume%nrays))
+    call error_handler(ierr, "Problem put pulse_repetition_time")
+
+    ierr = nf90_put_var(self%ncid, self%pulses_per_pulse_set_varid, volume%pulses_per_pulse_set(1:volume%nrays))
+    call error_handler(ierr, "Problem put pulses_per_pulse_set")
+
+    ierr = nf90_put_var(self%ncid, self%revisits_per_acquisition_time_varid, volume%revisits_per_acquisition_time(1:volume%nrays))
+    call error_handler(ierr, "Problem put revisits_per_acquisition_time")
+
+    ierr = nf90_put_var(self%ncid, self%beams_per_acquisition_time_varid, volume%beams_per_acquisition_time(1:volume%nrays))
+    call error_handler(ierr, "Problem put beams_per_acquisition_time")
+
     ! geometry_correction meta_group:
 
     ierr = nf90_put_var(self%ncid, self%azimuth_correction_varid, volume%azimuth_correction)
@@ -2394,6 +2442,10 @@ contains
     allocate(volume_initialize%beamwidth_v(MAX_RAYS))
     allocate(volume_initialize%nyquist_velocity(MAX_RAYS))
     allocate(volume_initialize%unambiguous_range(MAX_RAYS))
+    allocate(volume_initialize%pulse_repetition_time(MAX_RAYS))
+    allocate(volume_initialize%pulses_per_pulse_set(MAX_RAYS))
+    allocate(volume_initialize%revisits_per_acquisition_time(MAX_RAYS))
+    allocate(volume_initialize%beams_per_acquisition_time(MAX_RAYS))
     allocate(volume_initialize%eastward_velocity(MAX_RAYS))
     allocate(volume_initialize%northward_velocity(MAX_RAYS))
     allocate(volume_initialize%vertical_velocity(MAX_RAYS))

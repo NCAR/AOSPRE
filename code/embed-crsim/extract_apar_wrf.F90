@@ -400,6 +400,10 @@ program extract_apar
       endif
 
       volume%unambiguous_range(:) = 0.5 * ( 2.9979E8 * scan%pulse_repetition_time )
+      volume%pulse_repetition_time(:) = scan%pulse_repetition_time
+      volume%pulses_per_pulse_set(:) = scan%pulses_per_pulse_set
+      volume%revisits_per_acquisition_time(:) = scan%revisits_per_acquisition_time
+      volume%beams_per_acquisition_time(:) = scan%beams_per_acquisition_time
 
       volume%nrays = scan%beam_count
       if (volume%nrays > size(volume%time)) then

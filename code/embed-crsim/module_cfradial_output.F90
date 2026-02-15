@@ -344,6 +344,7 @@ contains
 !         &                  config_zhh_hail,       &    ! Added by BWK, 3/9/2022
          &                  config_zvv,            &
          &                  config_zvv_attenuated, &
+         &                  config_stdv_zvv,       &
          &                  config_zvv_noise_added,&
          &                  config_zvh,            &
          &                  config_zvh_attenuated, &

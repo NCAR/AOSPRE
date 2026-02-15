@@ -48,10 +48,11 @@ module module_scanning
 
 contains
 
-  subroutine read_scanning_table_file ( self, filename )
+  subroutine read_scanning_table_file ( self, filename, herky_jerky )
     implicit none
     class ( scan_type )             , intent(inout) :: self
     character(len=*)                , intent(in)    :: filename
+    logical                         , intent(in)    :: herky_jerky
     integer :: ierr
     character(len=1024) :: string
     character(len=24) :: lhs,rhs
@@ -64,6 +65,9 @@ contains
     real(kind=RKIND) :: rdrota
     real(kind=RKIND) :: rdtilt
     integer :: line_number
+    real(kind=RKIND) :: offset1
+    real(kind=RKIND) :: offset2
+    integer :: ibi
 
     allocate(temporary_rotation(1000000))
     allocate(temporary_tilt    (1000000))
@@ -225,12 +229,65 @@ contains
     self%sweep_start_index = temporary_start(1:self%sweep_count)
     self%sweep_end_index = temporary_end(1:self%sweep_count)
 
-!KWM    if ( mod(self%beam_count, self%beams_per_acquisition_time)>0) then
-!KWM        print*, "BEAM_COUNT must be divisible by BEAMS_PER_ACQUISITON_TIME"
-        print*, "BEAM_CONT = ", self%beam_count
-        print*, "BEAMS_PER_ACQUISITION_TIME = ", self%beams_per_acquisition_time
-!KWM        stop
-!KWM    endif
+    !  Now that we've read the scanning table, we can compute more timing details
+    !  of individual beams.
+
+    allocate(self%beam_time_from_start_of_scan_cycle(self%beam_count))
+
+    if (herky_jerky) then
+
+        ! For intermittent scans
+        ! Assume instantaneous scans, so the only time increment is going to be the time to skip between scans.
+        self%seconds_for_scan_cycle = 0
+        self%seconds_plus_skip = self%skip_seconds_between_scans
+        self%beam_time_from_start_of_scan_cycle = 0
+
+    else
+
+        !  Calculate seconds_for_scan_cycle, padding to a whole number of dwells
+        if ( mod(self%beam_count, self%beams_per_acquisition_time)>0) then
+            ! Integer division; add 1 for a partial set of beams in acquisition time.
+            self%seconds_for_scan_cycle = (1 + (self%beam_count / self%beams_per_acquisition_time)) * self%data_acquisition_time
+        else
+            ! Integer division
+            self%seconds_for_scan_cycle = (self%beam_count / self%beams_per_acquisition_time) * self%data_acquisition_time
+        endif
+
+        do k = 1, self%beam_count
+
+            !  Offset1 is the time of the start of a data acquisition cycle.
+            !  Note the integer division to put each beam into the right data acquisition cycle.
+
+            offset1 = ((k-1)/self%beams_per_acquisition_time) * self%data_acquisition_time
+
+            !  offset2 is the time of the beam from the start of a revisit cycle.
+            !  ibi is the index of the beam (1,2,3,etc) in a revisit cycle (or data acquisition cycle, for that matter)
+            ibi = 1+mod(k-1,self%beams_per_acquisition_time)
+            offset2 = ( ( (self%revisits_per_acquisition_time-1) * self%pulses_per_revisit_time ) + &
+                 &      ( ibi * self%pulses_per_pulse_set ) ) * self%pulse_repetition_time
+
+            !  Time of the beam from the start of a scan cycle.
+            self%beam_time_from_start_of_scan_cycle(k) = offset1  + offset2
+
+        enddo
+
+        self%seconds_plus_skip = self%seconds_for_scan_cycle + self%skip_seconds_between_scans
+
+    endif
+
+    write(*,'(" beam_count                               = ", I12)') self%beam_count
+    write(*,'(" sweep_count                              = ", I12)') self%sweep_count
+    write(*,'(" seconds_for_scan_cycle                   = ", F12.6)') self%seconds_for_scan_cycle
+    write(*,'(" skip_seconds_between_scan                = ", F12.6)') self%skip_seconds_between_scans
+    write(*,'(" seconds_plus_skip                        = ", F12.6)') self%seconds_plus_skip
+
+    do k = 1, self%sweep_count
+        write(*,'(6x,"Sweep ",I6, " :: beams ", I6, " through ", I6, " :: timing ", F12.6, " through ", F12.6, " seconds")') &
+             k, self%sweep_start_index(k), self%sweep_end_index(k), &
+             self%beam_time_from_start_of_scan_cycle(self%sweep_start_index(k)+1), &
+             self%beam_time_from_start_of_scan_cycle(self%sweep_end_index(k)+1)
+    enddo
+    write(*,*)
 
     return
 

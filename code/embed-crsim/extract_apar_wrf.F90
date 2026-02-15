@@ -255,7 +255,7 @@ program extract_apar
               scantime_offset_from_initial = icount * panel(ipanel)%scan%seconds_plus_skip
               ! Test on the end time of the scan
               ! If the end time is beyond leg_time_seconds, do ont include that scan.
-              if (scantime_offset_from_initial + panel(ipanel)%scan%seconds_for_scan_cycle - panel(ipanel)%scan%skip_seconds_between_scans > options%leg_time_seconds) exit SCANTIMES
+              if (scantime_offset_from_initial + panel(ipanel)%scan%seconds_for_scan_cycle > options%leg_time_seconds) exit SCANTIMES
               leg_current_time = options%leg_initial_time + scantime_offset_from_initial
               ! Insert, probably pretty slow, but our arrays are small enough.
               JLOOP : do j = 1, scount+1
@@ -467,28 +467,18 @@ program extract_apar
           BEAM_LOOP : do ibeam = scan%sweep_start_index(isweep), scan%sweep_end_index(isweep)
               iray = iray + 1
 
-              if (options%herky_jerky) then
-                  !  Time stands still for beams and sweeps in a particular scan cycle
-                  volume%time(iray) = int(leg_current_time) - volume%start_time_integer_seconds
-                  ! print *, leg_current_time, volume%time_coverage_start, volume%start_time_integer_seconds, volume%time(1)
-                  ! volume%time(iray) = leg_current_time
-              else
-                  !  Each beam gets an updated time
+              beamtime = leg_current_time + scan%beam_time_from_start_of_scan_cycle(iray)
 
-                  beamtime = leg_current_time + scan%beam_time_from_start_of_scan_cycle(iray)
+              !
+              !  volume%time for CFRadial output is described in the CFRadial documentation as
+              !  the time of the center of the beam, but for now I'll keep it as the time of
+              !  the last pulse in the beam.
+              !  It is in (fractional) seconds after <volume%time_interval_start>
+              !
 
-                  !
-                  !  volume%time for CFRadial output is described in the CFRadial documentation as 
-                  !  the time of the center of the beam, but for now I'll keep it as the time of 
-                  !  the last pulse in the beam.
-                  !  It is in (fractional) seconds after <volume%time_interval_start>
-                  !
+              volume%time(iray) = beamtime - volume%start_time_integer_seconds
 
-                  volume%time(iray) = beamtime - volume%start_time_integer_seconds
-
-                  ! write(*,'("ibeam, iray, beamtime = ", I5, I5, F12.6, F12.6)') ibeam, iray, beamtime, volume%time(iray)
-
-              endif
+              ! write(*,'("ibeam, iray, beamtime = ", I5, I5, F12.6, F12.6)') ibeam, iray, beamtime, volume%time(iray)
 
               ! Extract instantaneous aircraft details from the flightpath information.
               call flightpath%getloc(beamtime, proj, aircraft, error_flag)
@@ -1450,9 +1440,6 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
   real(kind=RKIND) :: fold_limit_lower
   real(kind=RKIND) :: fold_limit_upper
   character(len=1024) :: scanning_table
-  real(kind=RKIND) :: offset1
-  real(kind=RKIND) :: offset2
-  integer :: ibi
 
   character(len=1024) :: CRSIM_Config
 
@@ -1712,64 +1699,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
 
   write(*,*)
 
-  
-
-  call scan%read_scanning_table_file(trim(scanning_table))
-
-  !
-  !  Now that we've read the scanning table, we can compute more timing details
-  !  of individual beams.
-  !
-
-  if ( mod(scan%beam_count, scan%beams_per_acquisition_time)>0) then
-      ! Integer division; add 1 for a partial set of beams in acquisition time.
-      scan%seconds_for_scan_cycle = (1 + (scan%beam_count / scan%beams_per_acquisition_time)) * scan%data_acquisition_time
-  else
-      ! Integer division
-      scan%seconds_for_scan_cycle = (scan%beam_count / scan%beams_per_acquisition_time) * scan%data_acquisition_time
-  endif
-
-  allocate(scan%beam_time_from_start_of_scan_cycle(scan%beam_count))
-  do k = 1, scan%beam_count
-
-      !  Offset1 is the time of the start of a data acquisition cycle.
-      !  Note the integer division to put each beam into the right data acquisition cycle.
-
-      offset1 = ((k-1)/scan%beams_per_acquisition_time) * scan%data_acquisition_time
-
-      !  offset2 is the time of the beam from the start of a revisit cycle.
-      !  ibi is the index of the beam (1,2,3,etc) in a revisit cycle (or data acquisition cycle, for that matter)
-      ibi = 1+mod(k-1,scan%beams_per_acquisition_time) 
-      offset2 = ( ( (scan%revisits_per_acquisition_time-1) * scan%pulses_per_revisit_time ) + &
-           &      ( ibi * scan%pulses_per_pulse_set ) ) * scan%pulse_repetition_time
-
-      !  Time of the beam from the start of a scan cycle.
-      scan%beam_time_from_start_of_scan_cycle(k) = offset1  + offset2
-
-  enddo
-
-  if (opts%herky_jerky) then
-      ! For intermittent scans
-      ! Assume instantaneous scans, so the only time increment is going to be the time to skip between scans.
-      scan%seconds_plus_skip = scan%skip_seconds_between_scans
-  else
-      scan%seconds_plus_skip = scan%seconds_for_scan_cycle + scan%skip_seconds_between_scans
-  endif
-
-
-  write(*,*)
-  write(*,'(" sweep_count = ", I6)') scan%sweep_count
-  write(*,'(" beam_count  = ", I6)') scan%beam_count
-  write(*,'(" seconds_for_scan_cycle  = ", F20.8)') scan%seconds_for_scan_cycle
-  write(*,'(" skip_seconds_between_scan  = ", F20.8)') scan%skip_seconds_between_scans
-  write(*,'(" seconds_plus_skip  = ", F20.8)') scan%seconds_plus_skip
-  do k = 1, scan%sweep_count
-      write(*,'(6x,"Sweep ",I6, " :: beams ", I6, " through ", I6, " :: timing ", F12.6, " through ", F12.6, " seconds")') &
-           k, scan%sweep_start_index(k), scan%sweep_end_index(k), &
-           scan%beam_time_from_start_of_scan_cycle(scan%sweep_start_index(k)+1), &
-           scan%beam_time_from_start_of_scan_cycle(scan%sweep_end_index(k)+1)
-  enddo
-  write(*,*)
+  call scan%read_scanning_table_file(trim(scanning_table), opts%herky_jerky)
 
 end subroutine namelist_options
 

@@ -77,8 +77,9 @@ program extract_apar
       logical                 :: update_flag
       integer                 :: bwtype
       integer, dimension(256) :: seed
+      character(len=1024)     :: namelist_file
   end type panel_type
-  type(panel_type), dimension(4), target :: panel
+  type(panel_type), dimension(256), target :: panel
   type(volume_type), pointer :: volume => NULL()
   type(scan_type),   pointer :: scan => NULL()
   integer,           pointer :: scan_cycles_per_volume => NULL()
@@ -86,6 +87,7 @@ program extract_apar
   character(len=1024) :: namelist_file = ""
   character(len=1024) :: flightpath_name = ""
   character(len=1024) :: fp_format_string = ""
+  logical :: iq = .FALSE.
 
   integer :: igate
   integer :: iray
@@ -133,6 +135,12 @@ program extract_apar
   integer :: bwtype
 
   num_panels = command_argument_count()
+  call get_command_argument(1, namelist_file)
+  if(trim(namelist_file) == "--iq") then
+      iq = .TRUE.
+      num_panels = num_panels - 1
+  endif
+
   if (num_panels == 0) then
      write(*,'(80("*"))')
      write(*, '("*****",70X,"*****")')
@@ -161,13 +169,41 @@ program extract_apar
 
   call timer_resume("TOTAL")
 
-  do ipanel = 1, num_panels
-      call get_command_argument(ipanel, namelist_file)
-      call namelist_options(namelist_file, seedlen, options, panel(ipanel)%scan, conf)
-      panel(ipanel)%output_filename_format_string = options%output_filename_format_string
+  if (iq) then
+    call execute_command_line("mkdir -p ./iq", wait=.true.)
+    call execute_command_line("rm ./iq/* -rf", wait=.true.)
+    call execute_command_line("mkdir -p ./iq/scene ./iq/scan", wait=.true.)
+    ! Include runs for IQ add-on
+    do icount = 0, (num_panels - 1)
+      call get_command_argument(icount + 2, namelist_file)
+
+      ! Normal run
+      ipanel = icount * 2 + 1
+      call namelist_options(namelist_file, .FALSE., seedlen, options, panel(ipanel)%scan, conf)
+      panel(ipanel)%output_filename_format_string = "(""iq/scan/" // options%output_filename_format_string(3:)
+      panel(ipanel)%namelist_file = namelist_file
       panel(ipanel)%bwtype = options%bwtype
       call random_seed(get=panel(ipanel)%seed(1:seedlen))
-  enddo
+
+      ! Scene run
+      ipanel = icount * 2 + 2
+      call namelist_options(namelist_file, .TRUE., seedlen, options, panel(ipanel)%scan, conf)
+      panel(ipanel)%output_filename_format_string = "(""iq/scene/" // options%output_filename_format_string(3:)
+      panel(ipanel)%namelist_file = "namelist.iq"
+      panel(ipanel)%bwtype = 0
+      call random_seed(get=panel(ipanel)%seed(1:seedlen))
+    enddo
+    num_panels = num_panels * 2
+  else ! Regular mode
+    do ipanel = 1, num_panels
+      call get_command_argument(ipanel, namelist_file)
+      call namelist_options(namelist_file, .FALSE., seedlen, options, panel(ipanel)%scan, conf)
+      panel(ipanel)%output_filename_format_string = options%output_filename_format_string
+      panel(ipanel)%namelist_file = namelist_file
+      panel(ipanel)%bwtype = options%bwtype
+      call random_seed(get=panel(ipanel)%seed(1:seedlen))
+    enddo
+  endif
 
   call timer_resume("WRFTIMES")
   ! Added the conv_minute term to the following call (B. Klotz, 4/5/2021)  
@@ -960,7 +996,7 @@ program extract_apar
           write(l1,'(A,"_",A,F4.3)') ldate1(1:4)//ldate1(6:7)//ldate1(9:10),ldate1(12:13)//ldate1(15:16)//ldate1(18:19), volume%time(1)-floor(volume%time(1))
           write(l2,'(A,"_",A,F4.3)') ldate2(1:4)//ldate2(6:7)//ldate2(9:10),ldate2(12:13)//ldate2(15:16)//ldate2(18:19), volume%time(volume%nrays)-floor(volume%time(volume%nrays))
           write(outflnm, trim(panel(ipanel)%output_filename_format_string) ) trim(adjustl(l1)), trim(adjustl(l2))
-          call cf%open ( trim(outflnm), trim(namelist_file), scan%meters_between_gates, scan%meters_to_center_of_first_gate, &
+          call cf%open ( trim(outflnm), trim(panel(ipanel)%namelist_file), scan%meters_between_gates, scan%meters_to_center_of_first_gate, &
                &         volume%nrays, volume%ngates, volume%sweep, volume%time_coverage_start, &
                &         volume%fold_limit_lower, volume%fold_limit_upper )
           call cf%prepare_metadata(volume)
@@ -1340,7 +1376,7 @@ end subroutine WeightFuncCRS
 !------------------------------------------------------------------------------------------------------------------
 !
 
-subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
+subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf )
   use module_configuration, only : RKIND
   use module_access_wrf, only : options_type
   use module_access_wrf, only : waypoint_type
@@ -1355,6 +1391,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
 #endif
   implicit none
   character(len=*),   intent(in)  :: namelist_file
+  logical,            intent(in)  :: iq
   integer,            intent(out) :: seedlen
   type(options_type), intent(out) :: opts
   type(scan_type),    intent(out) :: scan
@@ -1440,6 +1477,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
   real(kind=RKIND) :: fold_limit_lower
   real(kind=RKIND) :: fold_limit_upper
   character(len=1024) :: scanning_table
+  character(len=1024) :: scanning_table_iq
 
   character(len=1024) :: CRSIM_Config
 
@@ -1455,7 +1493,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
        &             skip_seconds_between_scans,                             &
        &             SNR_mask_threshold,                                     &
        &             CRSIM_Config,                                           &
-       &             scanning_table
+       &             scanning_table, scanning_table_iq
 
 #ifdef _NOPE_SURVEILLANCE_
   namelist/surveillance_scanning/ meters_between_gates, meters_to_center_of_first_gate,   &
@@ -1616,6 +1654,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
   beams_per_acquisition_time = -999999
   skip_seconds_between_scans = 0.0
   scanning_table = ""
+  scanning_table_iq = ""
   CRSIM_Config = ""
   snr_mask_threshold = 0.0
 
@@ -1632,6 +1671,7 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
   if ( revisits_per_acquisition_time < 0       ) stop "namelist/scanning/:  set REVISITS_PER_ACQUISITION_TIME"
   if ( beams_per_acquisition_time < 0          ) stop "namelist/scanning/:  set BEAMS_PER_ACQUISITION_TIME"
   if ( scanning_table == " "                   ) stop "namelist/scanning/: set SCANNING_TABLE"
+  if ( iq .and. (scanning_table_iq == " ")     ) stop "namelist/scanning/: set SCANNING_TABLE_IQ"
   if ( CRSIM_Config == " "                     ) stop "namelist/scanning/: set CRSIM_Config"
 
   !
@@ -1699,7 +1739,12 @@ subroutine namelist_options ( namelist_file , seedlen , opts , scan , conf )
 
   write(*,*)
 
-  call scan%read_scanning_table_file(trim(scanning_table), opts%herky_jerky)
+  if (iq) then
+      scan%skip_seconds_between_scans = 10.0 / 3.0
+      call scan%read_scanning_table_file(trim(scanning_table_iq), .TRUE.)
+  else
+      call scan%read_scanning_table_file(trim(scanning_table), opts%herky_jerky)
+  endif
 
 end subroutine namelist_options
 

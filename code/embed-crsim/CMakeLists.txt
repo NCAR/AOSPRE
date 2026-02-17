@@ -31,7 +31,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     Fortran_FORMAT FREE
 )
 
-target_compile_options(${PROJECT_NAME} PRIVATE $<$<Fortran_COMPILER_ID:GNU>:-ffree-line-length-none>)
+target_compile_options(${PROJECT_NAME} PRIVATE $<$<Fortran_COMPILER_ID:GNU>:-ffree-line-length-none -O3 -g>)
 
 # MacOS specific flags to prevent an "Illegal instruction" error from occurring.
 # TODO: Investigate why this is necessary.

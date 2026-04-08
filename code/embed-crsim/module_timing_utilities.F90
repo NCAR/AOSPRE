@@ -58,6 +58,7 @@ contains
             call cpu_time(instant)
             timers(k)%total = timers(k)%total + (instant - timers(k)%start)
             timers(k)%start = -1.E36
+            !write(*,'("PAUSING Timer ", A, " at cpu_time ", F12.4)') name, timers(k)%total
             return
         endif
     enddo

@@ -125,6 +125,7 @@ contains
     integer,                                                     intent(out) :: idim
     integer,                                                     intent(out) :: jdim
     character(len=1024) :: string
+    character(len=1024) :: file
     integer :: ierr
     integer :: ncid
     integer :: varid
@@ -138,6 +139,13 @@ contains
     character(len=1024) :: xtime_units_string
     integer :: test_index
     integer :: local_conv_minute
+    integer :: io_status, exit_status, cmd_status
+    character(len=256) :: cmd_msg
+    character(len=1024) :: cmd
+    character(len=1) :: dummy
+
+    cmd = "ls -1 "//trim(wrf_glob_pattern)//" > .thing"
+    print *, "COMMAND = ", cmd
 
     wrf_files = " "
     wrf_xtimes = -1.E36
@@ -147,10 +155,33 @@ contains
     wrf_reference_time = " "
     index_count = 0
 
-    call execute_command_line("ls "//trim(wrf_glob_pattern)//" > .thing")
+    print *, "MAX_WRF_FILES = ", MAX_WRF_FILES
+    print *,"WRF Pattern = ", trim(wrf_glob_pattern)
+    call execute_command_line("ls "//trim(wrf_glob_pattern)//" > thing.txt")
+    !write(*,*) 'Press Enter to continue...'
+    !read(*,*) dummy
+    !write(*,*) 'Execution resumed.'
 
-    open(10,file=".thing", status='old', form='formatted', action='read')
+    !call execute_command_line(COMMAND="ls -1 "//trim(wrf_glob_pattern)//" > .thing", EXITSTAT=exit_status, CMDSTAT=cmd_status, CMDMSG=cmd_msg)
+    !call execute_command_line(COMMAND=cmd, EXITSTAT=exit_status, CMDSTAT=cmd_status, CMDMSG=cmd_msg)
+    !print *, "Test output..."
+    !if (cmd_status == 0) then
+    !   print *, "Command executed successfully."
+    !else
+    !   print *, "Error executing command."
+    !   print *, "Error message: ", trim(cmd_msg)
+    !   print *, "Command status code: ", cmd_status   
+    !endif   
+    
+    print *, "Opening file list."
+    open(10,file="thing.txt", status='old', form='formatted', action='read', iostat=io_status)
+    if (io_status /= 0) then
+       print *, "Error opening file = ", file
+       stop
+    endif
+    
     do i = 1, MAX_WRF_FILES
+        print *, "Loop index = ", i
         read(10,'(A)',end=999) string
         wrf_files(i) = trim(string)
 
@@ -158,9 +189,11 @@ contains
         call error_handler ( ierr , "Problem opening file "//trim(string) )
 
         ierr = nf90_inq_varid ( ncid, "XTIME", varid )
+        print *, "VARID XTIME = ", varid
         call error_handler ( ierr, "Problem inquiring varid XTIME" )
 
         local_conv_minute = conv_minute
+        print *, "Local Conv Minute = ", conv_minute
         if (local_conv_minute < 0) then
            ierr = nf90_get_att(ncid, varid, 'units', xtime_units_string)
            call error_handler ( ierr, "Problem getting variabl attribute 'units' for XTIME" )
@@ -3054,7 +3087,7 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine projection_from_wrf_output(wrf_file, proj)
+  subroutine projection_from_wrf_output(wrf_file, options, proj, mean_dx_geo)
     use netcdf, only : NF90_NOWRITE
     use netcdf, only : NF90_NOERR
     use netcdf, only : NF90_GLOBAL
@@ -3063,6 +3096,10 @@ contains
     use netcdf, only : nf90_get_att
     use netcdf, only : nf90_inq_varid
     use netcdf, only : nf90_get_var
+    use netcdf, only : nf90_inquire_dimension
+    use netcdf, only : nf90_inquire_variable
+    use netcdf, only : nf90_inq_dimid
+    use netcdf, only : nf90_inquire
 
     use module_llxy, only : proj_info
     use module_llxy, only : PROJ_LC
@@ -3070,14 +3107,17 @@ contains
     use module_llxy, only : PROJ_MERC
     use module_llxy, only : map_init
     use module_llxy, only : map_set
+    use module_llxy, only : latlon_to_ij
 
     implicit none
     character(len=*), intent(in) :: wrf_file
+    type(options_type), intent(in) :: options
     type(proj_info), intent(out) :: proj
+    real(kind=RKIND), allocatable, dimension(:,:) :: mapfac_m
 
-    integer :: ncid
+    integer :: ncid, lat_dimid, nlat, nlon, west_east_dimid, south_north_dimid, numdims
     integer :: ierr
-    integer :: varid
+    integer :: varid, ii
 
     integer :: map_proj ! 1=Lambert Conformal; 2=Polar Stereographic; 3=Mercator
     real(kind=RKIND)    :: truelat1
@@ -3089,41 +3129,132 @@ contains
     real(kind=RKIND)    ::  knowni
     real(kind=RKIND)    ::  knownj
     real, dimension(1) :: dummy1
+    real(kind=RKIND),   allocatable, dimension(:,:)   :: mapfac  
+    real(kind=RKIND),   allocatable, dimension(:,:)   :: dx_geo
+
+    integer    ::  wpt_len  ! Number of waypoints
+    integer    ::  min_wpt_x, max_wpt_x, min_wpt_y, max_wpt_y  ! X, Y max and min values (in grid index)
+    real(kind=RKIND), intent(out)    ::  mean_dx_geo
+
+    ! Added in the flight waypoints from the namelist file (BWK, 4/8/26)
+    ! The purpose is to determine the extent of the x,y grid we are using
+    ! Then determine the mean dx_geo over that grid. We can use this as 
+    ! a proxy for the individual points. Maybe in the future this can
+    ! be done on a pt-by-pt basis, but for now, it is not necessary.
+
+    ! Compute min, max x waypoints
+    wpt_len = SIZE(int(options%waypoint%x_grid))
+
+    min_wpt_x = int(options%waypoint(0)%x_grid)
+    max_wpt_x = int(options%waypoint(0)%x_grid)
+    min_wpt_y = int(options%waypoint(0)%y_grid)
+    max_wpt_y = int(options%waypoint(0)%y_grid)
+
+    do ii = 1, wpt_len-1
+        min_wpt_x = min(min_wpt_x, int(options%waypoint(ii)%x_grid))
+        max_wpt_x = max(max_wpt_x, int(options%waypoint(ii)%x_grid))
+        min_wpt_y = min(min_wpt_y, int(options%waypoint(ii)%y_grid))
+        max_wpt_y = max(min_wpt_y, int(options%waypoint(ii)%y_grid))
+    end do
+    print *, 'Min, Max waypoints in X then Y = ',min_wpt_x,max_wpt_x,min_wpt_y,max_wpt_y
 
     call map_init(proj)
-    
+    print *, "Opening WRF file..."
     ierr = nf90_open(trim(wrf_file), NF90_NOWRITE, ncid)
     call error_handler ( ierr , "Problem opening file "//trim(wrf_file) )
 
+    ierr = nf90_inq_varid (ncid, "XLAT", varid )
+    !print *,'varid = ',varid
+    call error_handler(ierr, "Problem inquire varid for XLAT" )
+   ! ierr = nf90_inq_dimid (ncid, "XLAT", lat_dimid )
+   ! print *, 'lat_dimid = ',lat_dimid
+   ! call error_handler(ierr, "Problem inquire dimension for XLAT" )
+   ! ierr = nf90_inquire_dimension ( ncid, lat_dimid, len = nlat )
+   ! call error_handler ( ierr, "Problem inquiring dimension west_east." )
+
+      ierr = nf90_get_var(ncid, varid, dummy1, start=(/1,1,1/), count=(/1,1,1/))
+      call error_handler(ierr, "Problem getting corner latitude")
+      print*, 'lat1 = ', dummy1
+      lat1 = dummy1(1)
+
+      ierr = nf90_inq_varid (ncid, "XLONG", varid )
+      call error_handler(ierr, "Problem inquire varid for XLONG" )
+   ! ierr = nf90_inq_dimid (ncid, "XLONG", lat_dimid )
+   ! call error_handler(ierr, "Problem inquire dimension for XLONG" )
+   ! ierr = nf90_inquire_dimension ( ncid, lat_dimid, len = nlon )
+   ! call error_handler ( ierr, "Problem inquiring dimension south_north." )
+
+      ierr = nf90_inq_dimid ( ncid, "west_east", west_east_dimid )
+      call error_handler ( ierr, "Problem inq_dimid for 'west_east'" )
+      ierr = nf90_inquire_dimension ( ncid, west_east_dimid, len=nlon )
+      call error_handler ( ierr, "Problem inquiring dimension west_east." )
+
+      ierr = nf90_inq_dimid ( ncid, "south_north", south_north_dimid )
+      call error_handler ( ierr, "Problem inq_dimid for 'south_north'" )
+      ierr = nf90_inquire_dimension ( ncid, south_north_dimid, len=nlat )
+      call error_handler ( ierr, "Problem inquiring dimension south_north." )
+
+       print *, "NLAT, NLON = ", nlat, nlon
+
+      ierr = nf90_inq_varid (ncid, "XLONG", varid )
+      call error_handler(ierr, "Problem inquire varid for XLONG" )
+      ierr = nf90_get_var(ncid, varid, dummy1, start=(/1,1,1/), count=(/1,1,1/))
+      call error_handler(ierr, "Problem getting corner longitude")
+      print*, 'lon1 = ', dummy1
+      lon1 = dummy1(1)
+    
+      ierr = nf90_get_att(ncid, NF90_GLOBAL, "DX", dx)
+      call error_handler ( ierr , "Problem getting DX attribute from file "//trim(wrf_file) )
+      print *, "DX = ",dx
+
+      allocate ( dx_geo ( nlon, nlat ) )
+
     ierr = nf90_get_att(ncid, NF90_GLOBAL, "MAP_PROJ", map_proj)
+    print *, "MAP_PROJ = ", map_proj
     if (.not. (ierr == NF90_NOERR)) then
+        dx_geo = dx
+        mean_dx_geo = dx
+        !mean_dx_geo = sum(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y)) / size(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+        print *, 'Mean DX_GEO= ',mean_dx_geo
         ierr = nf90_close(ncid)
         call error_handler ( ierr , "Problem closing file "//trim(wrf_file) )
         return
-    endif
+    else
 
-    ierr = nf90_get_att(ncid, NF90_GLOBAL, "TRUELAT1", truelat1)
-    call error_handler ( ierr , "Problem getting TRUELAT1 attribute from file "//trim(wrf_file) )
+       ierr = nf90_get_att(ncid, NF90_GLOBAL, "TRUELAT1", truelat1)
+       print *, 'TRUELAT = ',truelat1
+       call error_handler ( ierr , "Problem getting TRUELAT1 attribute from file "//trim(wrf_file) )
 
-    ierr = nf90_inq_varid (ncid, "XLAT", varid )
-    call error_handler(ierr, "Problem inquire varid for XLAT" )
-    ierr = nf90_get_var(ncid, varid, dummy1, start=(/1,1,1/), count=(/1,1,1/))
-    call error_handler(ierr, "Problem getting corner latitude")
-    print*, 'lat1 = ', dummy1
-    lat1 = dummy1(1)
+      ierr = nf90_inq_varid (ncid, "MAPFAC_M", varid )    ! Reading the map factor (BWK, 10/24/2025)
+      print *, 'VARID = ', varid
+      call error_handler(ierr, "Problem inquire varid for MAPFAC_M" )
+      ierr = nf90_inquire_variable (ncid, varid, ndims=numdims)    ! Reading the map factor (BWK, 10/24/2025)
+      call error_handler(ierr, "Problem inquire varid for MAPFAC_M" )
+      print *, numdims
 
-    ierr = nf90_inq_varid (ncid, "XLONG", varid )
-    call error_handler(ierr, "Problem inquire varid for XLONG" )
-    ierr = nf90_get_var(ncid, varid, dummy1, start=(/1,1,1/), count=(/1,1,1/))
-    call error_handler(ierr, "Problem getting corner longitude")
-    print*, 'lon1 = ', dummy1
-    lon1 = dummy1(1)
-    
-    ierr = nf90_get_att(ncid, NF90_GLOBAL, "DX", dx)
-    call error_handler ( ierr , "Problem getting DX attribute from file "//trim(wrf_file) )
+      allocate ( mapfac ( nlon, nlat ) )
+      !print *, 'SIZE= ',SHAPE(mapfac)
+      !print *, varid
+      ierr = nf90_get_var(ncid, varid, mapfac, start = (/1,1/), count = (/nlon, nlat/))
+    ! Reading the map factor (BWK, 10/24/2025)
+      call error_handler(ierr, "Problem get varid for MAPFAC_M" )
+      print *, RANK(mapfac)
 
-    select case (map_proj)
-    case (PROJ_LC)
+    ! Compute dx_geo
+      dx_geo = dx/mapfac(:,:)
+      !print *, 'SIZE = ', size(dx_geo)
+      !mean_dx_geo = dx
+      !print *, "SUM DX_GEO = ", sum(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+      !print *, "SIZE DX_GEO = ", size(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+      
+      mean_dx_geo = sum(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y)) / size(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+      print *, 'Mean DX_GEO= ',mean_dx_geo
+    !print *, "Shape MAPFACT = ", shape(mapfac)
+    !print *, "Shape DX_GEO = ", shape(dx_geo)
+    !print *, mapfac(1,1), dx_geo(1,1)
+
+      select case (map_proj)
+      case (PROJ_LC)
 
         ierr = nf90_get_att(ncid, NF90_GLOBAL, "TRUELAT2", truelat2)
         call error_handler ( ierr , "Problem getting TRUELAT2 attribute from file "//trim(wrf_file) )
@@ -3136,7 +3267,9 @@ contains
         call map_set(PROJ_LC, proj, truelat1=truelat1, truelat2=truelat2, lat1=lat1, lon1=lon1, knowni=knowni, knownj=knownj, stdlon=stdlon, dx=dx)
         print*, "cone factor = ", proj%cone
 
-    case (PROJ_PS)
+        !print *,"MAPFACT= ",proj%dx_mfac
+
+      case (PROJ_PS)
 
         ierr = nf90_get_att(ncid, NF90_GLOBAL, "STAND_LON", stdlon)
         call error_handler ( ierr , "Problem getting STAND_LON attribute from file "//trim(wrf_file) )
@@ -3146,22 +3279,22 @@ contains
         call map_set(PROJ_PS, proj, truelat1=truelat1, lat1=lat1, lon1=lon1, knowni=knowni, knownj=knownj, stdlon=stdlon, dx=dx)
         print*, "cone factor = ", proj%cone
 
-    case (PROJ_MERC)
+      case (PROJ_MERC)
 
         knowni = 1.0
         knownj = 1.0
         call map_set(PROJ_MERC, proj, truelat1=truelat1, lat1=lat1, lon1=lon1, knowni=knowni, knownj=knownj, dx=dx)
         print*, "cone factor = ", proj%cone
 
-    case default
+      case default
         write(*,'("Unrecognized map projection: MAP_PROJ attribute = ", I6)') map_proj
         write(*,'("   Only Lambert Conformal, Polar Stereographic, and Mercator projections are supported")')
         stop
-    end select
-    
-    ierr = nf90_close(ncid)
-    call error_handler ( ierr , "Problem closing file "//trim(wrf_file) )
+      end select
 
+      ierr = nf90_close(ncid)
+      call error_handler ( ierr , "Problem closing file "//trim(wrf_file) )
+    endif
   end subroutine projection_from_wrf_output
 
 !---------------------------------------------------------------------------------------------

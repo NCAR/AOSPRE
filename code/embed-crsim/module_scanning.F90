@@ -13,6 +13,7 @@ module module_scanning
       real(kind=RKIND) :: meters_to_center_of_first_gate
       real(kind=RKIND) :: max_range_in_meters
       real(kind=RKIND) :: snr_mask_threshold
+      real(kind=RKIND) :: MDS_1km
 
       real(kind=RKIND) :: seconds_for_scan_cycle
       real(kind=RKIND) :: seconds_plus_skip

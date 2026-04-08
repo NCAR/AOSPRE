@@ -138,7 +138,7 @@ contains
     ! integer :: clock_count_A, clock_count_B, clock_count_rate
 
     ! call system_clock(count=clock_count_A, count_rate=clock_count_rate)
-    ! print*, "CRSIM_WRAPPER"
+     print*, "CRSIM_WRAPPER"
 
     !  Move the call to ReadConfParameters to someplace outside the
     !  crsim wrapper, as it's an initialization step, done once and
@@ -237,7 +237,7 @@ contains
 
     rho_ds = -1.E36 ! Not used for Morrison
     
-    ! print *, "NRAYS = ", volume%nrays
+     print *, "NRAYS = ", volume%nrays
     do iray = 1, volume%nrays
         elev = volume%elevation(iray)
         elevx = abs(elev)
@@ -377,7 +377,8 @@ contains
                 endif
                 
                 !print *, 'Loop indices (Ray, Gate, IHT): ',iray,igate,iht
-
+                !print *, 'Conf: ', conf
+                !print *, 'ELEV, WW, TEMP, RHO_D, RHO_DS, QHYDRO: ', elev, ww, temp, rho_d, rho_ds, qhydro
                 call processing(iht, conf, elev, ww, temp, rho_d, rho_ds, qhydro, qnhydro,         &
                      &          spectra%VNyquist, spectra%NOISE_1km, spectra%NFFT, spectra%Nave,   &
                      &          range_m, w_r, sw_dyn,                                              &
@@ -404,8 +405,8 @@ contains
                 sw_h2 = (sin(elev*d2r)*sin(elev*d2r)) * sum(dDVh,mask=Zhh>Zthr)/Zhhptr(igate,iray)
                 SWtotptr(igate,iray) = sqrt(sw_h2 + sw_t2 + sw_s2 + sw_v2)
                 SWhptr(igate,iray) = sqrt(sw_h2)
-                !print *, "IGATE, IRAY = ", igate, iray
-                !print *, "sw_h2, sw_t2, sw_s2, sw_v2, SWtot = ", sw_h2, sw_t2, sw_s2, sw_v2, SWtotptr(igate,iray)
+               ! print *, "IGATE, IRAY = ", igate, iray
+               ! print *, "sw_h2, sw_t2, sw_s2, sw_v2, SWtot = ", sw_h2, sw_t2, sw_s2, sw_v2, SWtotptr(igate,iray)
                                 
             else
                 zhhptr(igate,iray) = -9999.
@@ -548,8 +549,9 @@ contains
         ldrhptr = -9999.
     endwhere
 
+    print*, "END CRSIM_WRAPPER"
     ! call system_clock(count=clock_count_B)
-    ! write(*,'("done CRSIM_WRAPPER:  ", F9.5, " seconds")') (clock_count_B - clock_count_A) / real(clock_count_rate)
+    !  write(*,'("done CRSIM_WRAPPER:  ", F9.5, " seconds")') (clock_count_B - clock_count_A) / real(clock_count_rate)
   end subroutine crsim_wrapper
 
   !! ----------------------------------------------------------------------------

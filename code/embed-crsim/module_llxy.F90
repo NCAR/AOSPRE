@@ -216,6 +216,7 @@ MODULE module_llxy
       LOGICAL         :: projected ! Flag to indicate whether AOSPRE should treat the 
                                    !  horizontal grid as projected (.TRUE.) or as a 
                                    !  cartesian coordinate (.FALSE.)
+      REAL(KIND=RKIND)             :: dx_mfac  ! Accounts for slight deviations in actual dx based on map factor (BWK,10/24/2025)
 #ifdef _NOPE_
       REAL(KIND=RKIND), POINTER, DIMENSION(:) :: gauss_lat  ! Latitude array for Gaussian grid
 #endif
@@ -261,6 +262,7 @@ MODULE module_llxy
       proj%init     = .FALSE.
       proj%wrap     = .FALSE.
       proj%projected = .FALSE.
+      proj%dx_mfac  = -999.9 ! To account for the Map Factor effect on dx (BWK,10/24/2025)
       proj%rho0     = 0.
       proj%nc       = 0.
       proj%bigc     = 0.

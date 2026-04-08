@@ -73,6 +73,7 @@ module module_cfradial_output
   type(config_output_type) :: config_WRF_HT
   type(config_output_type) :: config_WRF_RHO_D
   type(config_output_type) :: config_WRF_RHO_DS ! Added by BWK, 3/14/2022
+  type(config_output_type) :: config_WRF_QVAPOR ! Added by BWK, 8/12/2025
   type(config_output_type) :: config_WRF_QCLOUD
   type(config_output_type) :: config_WRF_QRAIN
   type(config_output_type) :: config_WRF_QICE
@@ -383,6 +384,7 @@ contains
          &                  config_WRF_HT,         &
          &                  config_WRF_RHO_D,      &
          &                  config_WRF_RHO_DS,     &   ! Added by BWK, 3/14/2022
+         &                  config_WRF_QVAPOR,     &   ! Added by BWK, 8/12/2025
          &                  config_WRF_QCLOUD,     &
          &                  config_WRF_QRAIN,      &
          &                  config_WRF_QICE,       &
@@ -1518,6 +1520,7 @@ contains
             if ( ptr%field_name == "U"           .and. .not. config_WRF_U%output ) cycle
             if ( ptr%field_name == "V"           .and. .not. config_WRF_V%output ) cycle
             if ( ptr%field_name == "W"           .and. .not. config_WRF_W%output ) cycle
+            if ( ptr%field_name == "QVAPOR"      .and. .not. config_WRF_QVAPOR%output ) cycle ! Added by BWK, 8/12/2025
             if ( ptr%field_name == "QCLOUD"      .and. .not. config_WRF_QCLOUD%output ) cycle
             if ( ptr%field_name == "QRAIN"       .and. .not. config_WRF_QRAIN%output ) cycle
             if ( ptr%field_name == "QICE"        .and. .not. config_WRF_QICE%output ) cycle
@@ -2468,7 +2471,7 @@ contains
         ! if ( list1(i) == "QICE" ) cycle
         ! if ( list1(i) == "QRAIN" ) cycle
         ! if ( list1(i) == "QCLOUD" ) cycle
-        if ( list1(i) == "QVAPOR" ) cycle
+        !if ( list1(i) == "QVAPOR" ) cycle
         if ( list1(i) == "P_HYD" ) cycle
 
         call volume_initialize%initialize_new_field ( ncid1  , list1(i) )
@@ -2484,7 +2487,8 @@ contains
     ! call volume%initialize_new_field ( -9999  , "PRESSURE",    source="WRF", description = "Pressure",            units = "Pa" )
     call volume_initialize%initialize_new_field ( -9999  , "HT",      source="WRF", &
          &                             description = "Geopotential Height", units = "m" )
-
+   
+    print*, "END VOLUME INITIALIZE"
   end function volume_initialize
 
 !---------------------------------------------------------------------------------------------
@@ -3126,6 +3130,8 @@ contains
     integer :: iray
     integer :: igate
     integer :: k
+    integer :: k_max = 10
+    real(kind=RKIND) :: k_tmp    ! Added as part of the computation of k_max
     real(kind=RKIND) :: rn_draw
 
     if ( self%fold_limit_lower < -1.E4 ) return
@@ -3165,13 +3171,21 @@ contains
     stdv_vel => self%point_to_data("STDV_VEL")
     do iray = 1, self%nrays
         do igate = 1, self%ngates
+            print *, 'Ray, Gate = ',iray,igate
+            print *, 'VELUNF, STDV = ',velunf(igate,iray),stdv_vel(igate,iray)
+            !if (abs(stdv_vel(igate,iray)) .eq. 'Infinity') then
+            !       stdv_vel(igate,iray) = -9999.
+            !       print *, 'STDV= ',stdv_vel(igate,iray)
+            !endif 
+
             if (velunf(igate,iray) > -9999) then
-                if ( (stdv_vel(igate,iray) > -9999) .and. (SNR_zhh(igate,iray) > snr_mask_threshold) ) then
+                if ( (stdv_vel(igate,iray) > -9999.) .and. (SNR_zhh(igate,iray) > snr_mask_threshold) ) then
                     rn_draw = random_normal()
                     velunf_noise_added(igate,iray) = velunf(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     veltru_noise_added(igate,iray) = veltru(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     velunf_fvel_noise_added(igate,iray) = velunf_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     veltru_fvel_noise_added(igate,iray) = veltru_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
+                    print *,'VELUNF_Noise, VELTRU_Noise = ',velunf_noise_added(igate,iray),veltru_noise_added(igate,iray)
                 endif
             endif
         enddo
@@ -3183,47 +3197,60 @@ contains
     veltruf_fvel => self%new_array("VELTRUF_FVEL")
     veltruf_fvel = -9999.
 
+    ! Need to compute the k_max based on the Nyquist velocity
+    k_tmp = ( -0.3485 * self%fold_limit_upper ) + 21.8725
+    k_max = CEILING(k_tmp)
+    print *,'K_tmp, K_max: ',k_tmp,k_max
+
     RAY_LOOP : do iray = 1, self%nrays
         self%nyquist_velocity(iray)   = self%fold_limit_upper
         ! self%unambiguous_range(iray) = 71379.16
         GATE_LOOP : do igate = 1, self%ngates
+            print *, 'RAY, GATE = ', iray, igate
 
-            if ( abs(velunf_noise_added(igate,iray)) > 9998 ) cycle GATE_LOOP
+            if ( abs(velunf_noise_added(igate,iray)) > 500 ) cycle GATE_LOOP
 
             vel(igate,iray) = velunf(igate,iray)
             vel_noise_added(igate,iray) = velunf_noise_added(igate,iray)! velunf(igate,iray)
-
-            do k = 1, 10
+            print *, 'Initial Val: Vel, Vel_noise = ',vel(igate,iray),vel_noise_added(igate,iray)
+            print *, 'Upper fold limit, Lower fold limit: ',self%fold_limit_upper,self%fold_limit_lower
+            do k = 1, k_max
                 if ( vel(igate,iray) < self%fold_limit_upper ) exit
                 vel(igate,iray) = self%fold_limit_lower + (vel(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf = ', velunf(igate,iray)
                     stop "A) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
+             !   print *, 'k, Vel = ', k, vel(igate,iray)
+             !   print *, 'Lower limit = ', self%fold_limit_lower
                 if ( vel(igate,iray) > self%fold_limit_lower ) exit
                 vel(igate,iray) = self%fold_limit_upper + (vel(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf = ', velunf(igate,iray)
                     stop "B) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
+             !   print *, 'k, Vel_Noise = ', k, vel_noise_added(igate,iray)
+             !   print *, 'Upper limit = ', self%fold_limit_upper
                 if ( vel_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 vel_noise_added(igate,iray) = self%fold_limit_lower + (vel_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf_noise_added = ', velunf_noise_added(igate,iray)
                     stop "C) Fold?"
                 endif
             enddo
             
-            do k = 1, 10
+            do k = 1, k_max
+              !   print *, 'k, Vel_Noise = ',k,vel_noise_added(igate,iray)
+              !  print *, 'Lower limit = ', self%fold_limit_lower
                 if ( vel_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 vel_noise_added(igate,iray) = self%fold_limit_upper + (vel_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf_noise_added = ', velunf_noise_added(igate,iray)
                     stop "D) Fold?"
                 endif
@@ -3236,73 +3263,73 @@ contains
             veltruf_fvel(igate,iray) = veltru_fvel(igate,iray)
             veltruf_fvel_noise_added(igate,iray) = veltru_noise_added(igate,iray)
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf(igate,iray) < self%fold_limit_upper ) exit
                 veltruf(igate,iray) = self%fold_limit_lower + (veltruf(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru = ', veltru(igate,iray)
                     stop "C) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf(igate,iray) > self%fold_limit_lower ) exit
                 veltruf(igate,iray) = self%fold_limit_upper + (veltruf(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru = ', veltru(igate,iray)
                     stop "D) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_noise_added(igate,iray) = self%fold_limit_lower + (veltruf_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_noise_added = ', veltru_noise_added(igate,iray)
                     stop "E) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 veltruf_noise_added(igate,iray) = self%fold_limit_upper + (veltruf_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_noise_added = ', veltru_noise_added(igate,iray)
                     stop "F) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_fvel(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_fvel(igate,iray) = self%fold_limit_lower + (veltruf_fvel(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_fvel = ', veltru_fvel(igate,iray)
                     stop "G) Fold?"
                 endif
             enddo
 
-            !do k = 1, 10
+            !do k = 1, k_max
             !    if ( veltruf_fvel(igate,iray) > self%fold_limit_lower ) exit
             !    veltruf_fvel(igate,iray) = self%fold_limit_upper + (veltruf_fvel(igate,iray)-self%fold_limit_lower)
-            !    if (k==10) then
+            !    if (k==k_max) then
             !        print*, 'veltru_fvel = ', veltru_fvel(igate,iray)
             !        stop "H) Fold?"
             !    endif
             !enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_fvel_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_fvel_noise_added(igate,iray) = self%fold_limit_lower + (veltruf_fvel_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_fvel_noise_added = ', veltru_fvel_noise_added(igate,iray)
                     stop "I) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_fvel_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 veltruf_fvel_noise_added(igate,iray) = self%fold_limit_upper + (veltruf_fvel_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_fvel_noise_added = ', veltru_fvel_noise_added(igate,iray)
                     stop "J) Fold?"
                 endif
@@ -3407,17 +3434,18 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine compute_snr(self)
+  subroutine compute_snr(self,MDS1km)
     ! Signal-to-Noise Ratio
     implicit none
     class (volume_type) :: self
+    real(kind=RKIND), intent(in) :: MDS1km
     integer :: iray
     integer :: igate
     real(kind=RKIND), pointer, dimension(:,:) :: SNR_zhh  ! Pointer to new field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: SNR_zvv  ! Pointer to new field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: Zhh_attenuated
     real(kind=RKIND), pointer, dimension(:,:) :: Zvv_attenuated
-    real(kind=RKIND), parameter :: MDS1KM = -30.0 ! Minimum detectable signal (dBZ) at 1km
+    !real(kind=RKIND), parameter :: MDS1KM = -30.0 ! Minimum detectable signal (dBZ) at 1km
 
     SNR_zhh => self%new_array("SNR_zhh")
     SNR_zvv => self%new_array("SNR_zvv")
@@ -3526,8 +3554,12 @@ contains
                 stdv_Zhh(igate,iray) = 10*log10(1.0+sqrt(YU3_zhh))
                 stdv_Zvv(igate,iray) = 10*log10(1.0+sqrt(YU3_zvv))
                 stdv_Vel(igate,iray) = sqrt(YU4_zhh)
-                !print *, "IGATE, IRAY = ", igate, iray
-                !print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
+
+                if (abs(stdv_Vel(igate,iray)) > 200) then
+                   stdv_Vel(igate,iray) = -9999.
+                endif 
+               print *, "IGATE, IRAY = ", igate, iray
+               print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
             endif
         enddo
     enddo

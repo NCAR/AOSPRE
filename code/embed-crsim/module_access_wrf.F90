@@ -22,6 +22,7 @@ module module_access_wrf
   type, public :: options_type
       character(len=1024) :: wrf_glob_pattern
       character(len=1024) :: output_filename_format_string
+      character(len=1024) :: namelist_iq
       character(len=1) :: flight_level_coordinate
       type(waypoint_type), allocatable, dimension(:) :: waypoint  ! When allocated with size n, the range should be [0:n-1]
       real(kind=RKIND) :: air_speed

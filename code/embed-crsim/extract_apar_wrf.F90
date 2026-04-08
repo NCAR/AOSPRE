@@ -189,7 +189,7 @@ program extract_apar
       ipanel = icount * 2 + 2
       call namelist_options(namelist_file, .TRUE., seedlen, options, panel(ipanel)%scan, conf)
       panel(ipanel)%output_filename_format_string = "(""iq/scene/" // options%output_filename_format_string(3:)
-      panel(ipanel)%namelist_file = "namelist.iq"
+      panel(ipanel)%namelist_file = options%namelist_iq
       panel(ipanel)%bwtype = 0
       call random_seed(get=panel(ipanel)%seed(1:seedlen))
     enddo
@@ -1407,6 +1407,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   character(len=1024) :: wrf_glob_pattern
   character(len=1024) :: output_filename_format_string
   character(len=1)    :: flight_level_coordinate
+  character(len=1024) :: namelist_iq
 
   real(kind=RKIND), dimension(0:999) :: flight_waypoints_x
   real(kind=RKIND), dimension(0:999) :: flight_waypoints_y
@@ -1457,7 +1458,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
        &            flight_waypoints_x, flight_waypoints_y, flight_waypoints_vert, heading, air_speed, &
        &            leg_initial_time, leg_time_seconds, conv_minute, &
        &            bwtype, ref_angle, &
-       &            herky_jerky, helicopter, seed
+       &            herky_jerky, helicopter, seed, namelist_iq
 
   real(kind=RKIND) :: meters_between_gates
   real(kind=RKIND) :: meters_to_center_of_first_gate
@@ -1595,6 +1596,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   opts%ref_angle  = ref_angle
   opts%herky_jerky = herky_jerky
   opts%helicopter = helicopter
+  opts%namelist_iq  = namelist_iq
 
   !
   !  Sanity checks on /options/
@@ -1672,6 +1674,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   if ( beams_per_acquisition_time < 0          ) stop "namelist/scanning/:  set BEAMS_PER_ACQUISITION_TIME"
   if ( scanning_table == " "                   ) stop "namelist/scanning/: set SCANNING_TABLE"
   if ( iq .and. (scanning_table_iq == " ")     ) stop "namelist/scanning/: set SCANNING_TABLE_IQ"
+  if ( iq .and. (namelist_iq == " ")           ) stop "namelist/scanning/: set NAMELIST_IQ"
   if ( CRSIM_Config == " "                     ) stop "namelist/scanning/: set CRSIM_Config"
 
   !

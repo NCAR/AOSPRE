@@ -4,3 +4,10 @@ a.out
 *~
 build
 aux*
+test/iq
+test/LHS*.nc
+test/RHS*.nc
+test/TOP*.nc
+test/BOT*.nc
+CMakeLists.txt.user
+

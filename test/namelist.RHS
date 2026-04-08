@@ -16,6 +16,7 @@
 
  air_speed = 120. ! meters per second
  herky_jerky = .FALSE.
+ namelist_iq = "../iq/namelist.iq"
 
  bwtype = 0,
  ref_angle = 270,
@@ -33,6 +34,7 @@
  CRSIM_Config = "CONFIG_crsim"
 
  scanning_table = "scanning_rhs.txt"
+ scanning_table_iq = "../iq/Scanning_IQ_RHS.txt"
  pulse_repetition_frequency     = 2500
  pulses_per_pulse_set           = 2
  revisits_per_acquisition_time  = 20

@@ -518,7 +518,7 @@ contains
   !-------------------------------------------------------------------------------
   !
 
-  subroutine flightpath_getloc(self, time_request, proj, aircraft, error_flag)
+  subroutine flightpath_getloc(self, time_request, proj, gridspace_dx, aircraft, error_flag)
     ! Input:
     !
     !     from the self of class(flightpath_class):
@@ -550,6 +550,7 @@ contains
     class(flightpath_class),       intent(in)    :: self
     real(kind=RKIND),                          intent(in)    :: time_request
     type(proj_info),               intent(in)    :: proj
+    real(kind=RKIND), intent(in)                 :: gridspace_dx
     type (aircraft_metadata_type), intent(inout) :: aircraft
     integer                      , intent(out)   :: error_flag
 
@@ -625,8 +626,11 @@ contains
     aircraft%v = wind(2)
     aircraft%w = wind(3)
 
-    aircraft%xgrid = 1.0 + ( loc(1) / proj%dx )
-    aircraft%ygrid = 1.0 + ( loc(2) / proj%dx )
+    !aircraft%xgrid = 1.0 + ( loc(1) / proj%dx )
+    !aircraft%ygrid = 1.0 + ( loc(2) / proj%dx )
+
+    aircraft%xgrid = 1.0 + ( loc(1) / gridspace_dx )
+    aircraft%ygrid = 1.0 + ( loc(2) / gridspace_dx )
 
     if ( use_external_attitudes ) then
         call attitude_details_at_time ( time_request, aircraft%roll, aircraft%pitch, aircraft%drift, aircraft%heading, &
@@ -671,7 +675,7 @@ contains
   !-------------------------------------------------------------------------------
   !
 
-  subroutine flightpath_dump(self, outfile, proj, rank)
+  subroutine flightpath_dump(self, outfile, proj, gridspace_dx, rank)
     use module_llxy, only : proj_info
     use module_llxy, only : PROJ_PS
     use module_llxy, only : PROJ_LC
@@ -681,6 +685,7 @@ contains
     class (flightpath_class), intent(in) :: self
     character(len=*), intent(in) :: outfile
     type(proj_info), intent(in) :: proj
+    real(kind=RKIND), intent(in) :: gridspace_dx
     integer, intent(in) :: rank
     integer :: ierr
     integer :: k
@@ -718,8 +723,11 @@ contains
 
     do k = 0, self%pathcount
         if (proj%projected) then
-            xgrid = 1.0 + ( self%location_history(1,k) / proj%dx )
-            ygrid = 1.0 + ( self%location_history(2,k) / proj%dx )
+            !xgrid = 1.0 + ( self%location_history(1,k) / proj%dx )
+            !ygrid = 1.0 + ( self%location_history(2,k) / proj%dx )
+
+            xgrid = 1.0 + ( self%location_history(1,k) / gridspace_dx )
+            ygrid = 1.0 + ( self%location_history(2,k) / gridspace_dx )
             call ij_to_latlon(proj, xgrid, ygrid, lat, lon)
 
             select case (proj%code)

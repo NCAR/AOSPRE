@@ -18,6 +18,7 @@ program extract_apar
   use module_llxy, only : proj_info
   use module_llxy, only : map_init
   use module_llxy, only : map_set
+  use module_llxy, only : latlon_to_ij
   use kwm_date_utilities, only : geth_newdate
   use module_external_attitude, only : use_external_attitudes
   use module_external_attitude, only : read_attitude_file
@@ -116,6 +117,8 @@ program extract_apar
 
   character(len=19) :: wrf_reference_time
   real(kind=RKIND), pointer, dimension(:,:) :: vx, vy, vz, zindxA, zindxB, Kwork, Kwork2, Kwork3
+  !real(kind=RKIND), dimension(:,:), allocatable :: dx_geo
+  real(kind=RKIND)    ::  mean_dxgeo ! Mean value determined in the projection code
 
   !  Beamwidth vertex points
   real(kind=RKIND), pointer, dimension(:,:) :: vx_ul, vy_ul, vz_ul, zindxA_ul, zindxB_ul
@@ -238,7 +241,9 @@ program extract_apar
   !    For real-world WRF simulations, set up the map projection as described in the WRF output.
   !
 
-  call projection_from_wrf_output(wrf_files(1), proj)
+  call projection_from_wrf_output(wrf_files(1), options, proj, mean_dxgeo)
+  print *, 'proj_code = ',proj%code
+  !print *, 'proj_projected = ',proj%projected
       
   if (proj%code == -999) then
       !
@@ -263,7 +268,11 @@ program extract_apar
       call read_attitude_file ( options%leg_initial_time, start_at=1.0_RKIND )
   endif
 
-  flightpath = flightpath_class ( options%waypoint, options%leg_initial_time, proj%dx )
+  print *,'Waypoints = ',options%waypoint(0)%x_grid
+  !print *,'Waypoints = ',min(options%waypoint%x_grid),max(options%waypoint%x_grid)
+
+  !flightpath = flightpath_class ( options%waypoint, options%leg_initial_time, proj%dx )
+  flightpath = flightpath_class ( options%waypoint, options%leg_initial_time, mean_dxgeo )
   aircraft%track = flightpath%track
   aircraft%air_speed = options%air_speed
   aircraft%drift = 0.0
@@ -307,14 +316,17 @@ program extract_apar
           enddo SCANTIMES
       enddo
   endif
+  !print*, "Scount = ", scount
+  !print*, "Scan time vector = ", scantime_vector
 
   call timer_resume("FLIGHTPATH")
   RANK_IF: if (RANK==0) then
-      call flightpath%precompute(options, proj%dx, wrf_xtimes, wrf_times, wrf_files, wrf_file_index, wrf_time_index)
+      !call flightpath%precompute(options, proj%dx, wrf_xtimes, wrf_times, wrf_files, wrf_file_index, wrf_time_index)
+      call flightpath%precompute(options, mean_dxgeo, wrf_xtimes, wrf_times, wrf_files, wrf_file_index, wrf_time_index)
       call timer_print("OpenA")
       call timer_print("OpenB")
       flightpath_name = "flightpath.ascii"
-      call flightpath%dump(trim(flightpath_name), proj, rank)
+      call flightpath%dump(trim(flightpath_name), proj, mean_dxgeo, rank)
   endif  RANK_IF
   call timer_pause("FLIGHTPATH")
 
@@ -346,20 +358,24 @@ program extract_apar
 
   call timer_resume("LEG_LOOP")
   LEG: do icount = 1, scount
-      
+      !print*, "ICOUNT = ",icount      
       if (rank /= (icount-1)*cpu_count/scount) then
           panel(ipanel)%scan%scan_cycle = panel(ipanel)%scan%scan_cycle + 1
+          print*, "Cycling LEG..."
           cycle LEG
       endif
       ipanel = ipanel_vector(icount)
       scan => panel(ipanel)%scan
       bwtype = panel(ipanel)%bwtype
-      print*, "seed for panel = ", panel(ipanel)%seed(1:seedlen)
+      print*,"leg_current_time = ", scantime_vector(icount)
+      !print*, "seed for panel = ", panel(ipanel)%seed(1:seedlen)
       call random_seed(put=panel(ipanel)%seed(1:seedlen))
       ! <leg_current_time> is seconds after <wrf_reference_time>
       leg_current_time = scantime_vector(icount)
-      print*, rank, "leg_current_time = ", leg_current_time
+      print*, RANK, "leg_current_time = ", leg_current_time
 
+      print*, "seed for panel = ", panel(ipanel)%seed(1:seedlen)
+      !print*, "CPU_COUNT = ", CPU_COUNT
       if (RANK+1 > CPU_COUNT) stop "RANK,CPU_COUNT"
 
       call timer_resume("WRFSEARCH")
@@ -517,11 +533,13 @@ program extract_apar
               ! write(*,'("ibeam, iray, beamtime = ", I5, I5, F12.6, F12.6)') ibeam, iray, beamtime, volume%time(iray)
 
               ! Extract instantaneous aircraft details from the flightpath information.
-              call flightpath%getloc(beamtime, proj, aircraft, error_flag)
+              !call flightpath%getloc(beamtime, proj, aircraft, error_flag)
+              call flightpath%getloc(beamtime, proj, mean_dxgeo, aircraft, error_flag)
               if ( error_flag > 0 ) exit LEG
 
               ! Fill in beam-specific details of the volume structure.
-              call beam_geometry ( aircraft , scan , iray , volume , proj%dx, conf%Theta1, bwtype, options%ref_angle )
+              !call beam_geometry ( aircraft , scan , iray , volume , proj%dx, conf%Theta1, bwtype, options%ref_angle )
+              call beam_geometry ( aircraft , scan , iray , volume , mean_dxgeo, conf%Theta1, bwtype, options%ref_angle )
 
               call timer_resume("GATE_LOOP")
               GATE_LOOP : do igate = 1, volume%ngates
@@ -611,6 +629,7 @@ program extract_apar
       call timer_resume("PTR_INTERP")
       ptr => volume%next_point ( NULL() )
       do while ( associated ( ptr ) )
+          print *,'Pointer source ',ptr%source
           select case ( ptr%source )
           case ( "WRF" )
               call timer_resume("PTRALLOC")
@@ -620,6 +639,7 @@ program extract_apar
                   allocate ( ptr%data ( volume%ngates, volume%nrays ) )
               endif
               call timer_pause("PTRALLOC")
+              print *, 'Field name ',ptr%field_name
               if (ptr%field_name == "U") then
                   continue
               elseif (ptr%field_name == "V") then
@@ -645,10 +665,12 @@ program extract_apar
                           deallocate(Kwork)
                       endif
                   else
-                      call metaA%interp_varbw ("A", bwtype, volume, scan, proj%dx, ptr%field_name, ptr%data )
+                      !call metaA%interp_varbw ("A", bwtype, volume, scan, proj%dx, ptr%field_name, ptr%data )
+                      call metaA%interp_varbw ("A", bwtype, volume, scan, mean_dxgeo, ptr%field_name, ptr%data )
                       if (time_interpolation_factor < 1.0 ) then
                           allocate(Kwork(volume%ngates, volume%nrays))
-                          call metaB%interp_varbw ("B", bwtype, volume, scan, proj%dx, ptr%field_name, Kwork )
+                          !call metaB%interp_varbw ("B", bwtype, volume, scan, proj%dx, ptr%field_name, Kwork )
+                          call metaB%interp_varbw ("B", bwtype, volume, scan, mean_dxgeo, ptr%field_name, Kwork )
                           ptr%data = ptr%data*time_interpolation_factor + Kwork*(1.0-time_interpolation_factor)
                           deallocate(Kwork)
                       endif
@@ -656,6 +678,7 @@ program extract_apar
                   call timer_pause("VARINTERP")
               endif
           end select
+          print *,'Field name ',ptr%field_name
           ptr => volume%next_point(ptr)
       enddo
       call timer_pause("PTR_INTERP")
@@ -667,10 +690,12 @@ program extract_apar
       ! Compute Ku at time A
       Kwork => volume%new_array("Ku")
       Kwork2 => volume%point_to_data("U")
+      print *,'Size Kwork2',size(Kwork,2),size(Kwork,1)
       if (bwtype == 0) then
           call metaA%Ku(vx, vy, zindxA, Kwork, Kwork2)
       else
-          call metaA%Ku_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
+          !call metaA%Ku_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
+          call metaA%Ku_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
       endif
 
       nullify(Kwork)
@@ -685,7 +710,8 @@ program extract_apar
           if (bwtype == 0) then
               call metaB%Ku(vx, vy, zindxB, Kwork, Kwork2)
           else
-              call metaB%Ku_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
+              !call metaB%Ku_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
+              call metaB%Ku_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
           endif
           nullify(Kwork)
           nullify(Kwork2)
@@ -719,7 +745,8 @@ program extract_apar
       if (bwtype == 0) then
          call metaA%Kv(vx, vy, zindxA, Kwork, Kwork2)
       else
-         call metaA%Kv_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2)   ! Added by B. Klotz (12/18/2023), part of the variable beamwidth
+         !call metaA%Kv_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2)   ! Added by B. Klotz (12/18/2023), part of the variable beamwidth
+         call metaA%Kv_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
       endif
       nullify(Kwork)
       nullify(Kwork2)
@@ -733,7 +760,8 @@ program extract_apar
           if (bwtype == 0) then
              call metaB%Kv(vx, vy, zindxB, Kwork, Kwork2)
           else
-             call metaB%Kv_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
+             !call metaB%Kv_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
+             call metaB%Kv_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
           endif
           nullify(Kwork)
           nullify(Kwork2)
@@ -769,7 +797,8 @@ program extract_apar
       if (bwtype == 0) then
           call metaA%Kw(vx, vy, zindxA, Kwork, Kwork2, Kwork3)
       else
-          call metaA%Kw_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+          !call metaA%Kw_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+          call metaA%Kw_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
       endif
       nullify(Kwork)
       nullify(Kwork2)
@@ -784,7 +813,8 @@ program extract_apar
           if (bwtype == 0) then
               call metaB%Kw(vx, vy, zindxB, Kwork, Kwork2, Kwork3)
           else
-              call metaB%Kw_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+              !call metaB%Kw_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+              call metaB%Kw_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
           endif
           nullify(Kwork)
           nullify(Kwork2)
@@ -831,7 +861,8 @@ program extract_apar
       if (bwtype == 0) then
           call metaA%RHO_D(vx, vy, zindxA, Kwork, Kwork2, Kwork3) ! Added Kwork3 (BWK, 3/14/2022)
       else
-          call metaA%RHO_D_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+          !call metaA%RHO_D_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+          call metaA%RHO_D_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
       endif
       nullify(Kwork)
       nullify(Kwork2)
@@ -845,7 +876,8 @@ program extract_apar
           if (bwtype == 0) then
               call metaB%RHO_D(vx, vy, zindxB, Kwork, Kwork2, Kwork3)
           else
-              call metaB%RHO_D_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+              !call metaB%RHO_D_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+              call metaB%RHO_D_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
           endif
           nullify(Kwork)
           nullify(Kwork2)
@@ -896,7 +928,8 @@ program extract_apar
       !
 
       call timer_resume("RADVEL")
-      call volume%radial_velocity ( proj%dx )
+      !call volume%radial_velocity ( proj%dx )
+      call volume%radial_velocity ( mean_dxgeo )
       call timer_pause("RADVEL")
 
       !
@@ -911,7 +944,8 @@ program extract_apar
       ! Compute new velocity with fall velocites included
       !
 
-      call volume%radial_velocity_fvel ( proj%dx )
+      !call volume%radial_velocity_fvel ( proj%dx )
+      call volume%radial_velocity_fvel ( mean_dxgeo )
 
       !
       !  Consider attenuation.
@@ -926,7 +960,7 @@ program extract_apar
       !
 
       call timer_resume("SNR")
-      call volume%compute_snr()
+      call volume%compute_snr(scan%MDS_1km)
       call timer_pause("SNR")
 
       !
@@ -973,7 +1007,9 @@ program extract_apar
       !
 
       if ( mod ( scan%scan_cycle + 1, scan_cycles_per_volume ) == 0 ) then
+          print*, "ICOUNT_end = ",icount
           call timer_resume("CFOUTPUT")
+          !print*, "ICOUNT_end = ",icount
           write(outflnm, trim(panel(ipanel)%output_filename_format_string) ) volume%number
 
           call geth_newdate(ldate1, volume%time_coverage_start, int(volume%time(1)))
@@ -1002,13 +1038,16 @@ program extract_apar
           call cf%prepare_metadata(volume)
           call cf%write_volume(volume, scan%primary_axis, proj)
           call cf%close()
+          !print*, "ICOUNT_end = ",icount
           call timer_pause("CFOUTPUT")
       endif
 
+      !print*, "ICOUNT_end = ",icount 
       scan%scan_cycle = scan%scan_cycle + 1
       call panel(ipanel)%volume%final()
       call random_seed(get=panel(ipanel)%seed(1:seedlen))
       nullify(scan, volume, scan_cycles_per_volume)
+      !print*, "ICOUNT_end = ",icount 
   enddo LEG
 
   call timer_pause("LEG_LOOP")
@@ -1474,6 +1513,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   integer :: pulses_per_revisit_time
   integer :: pulses_per_acquisition_time
   real(kind=RKIND) :: skip_seconds_between_scans
+  real(kind=RKIND) :: MDS_1km       ! Added by BWK (9/12/2025)
 
   real(kind=RKIND) :: fold_limit_lower
   real(kind=RKIND) :: fold_limit_upper
@@ -1493,6 +1533,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
        &             beams_per_acquisition_time,                             &
        &             skip_seconds_between_scans,                             &
        &             SNR_mask_threshold,                                     &
+       &             MDS_1km,                                                &
        &             CRSIM_Config,                                           &
        &             scanning_table, scanning_table_iq
 
@@ -1500,6 +1541,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   namelist/surveillance_scanning/ meters_between_gates, meters_to_center_of_first_gate,   &
        &             max_range_in_meters, seconds_for_scan_cycle,            &
        &             scan_interval_seconds,                                  &
+       &             MDS_1km,                                                &
        &             scanning_table
 #endif
 
@@ -1657,6 +1699,8 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   skip_seconds_between_scans = 0.0
   scanning_table = ""
   scanning_table_iq = ""
+  MDS_1km = -30.0
+  
   CRSIM_Config = ""
   snr_mask_threshold = 0.0
 
@@ -1702,6 +1746,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   scan%pulses_per_pulse_set           = pulses_per_pulse_set
   scan%revisits_per_acquisition_time  = revisits_per_acquisition_time
   scan%beams_per_acquisition_time     = beams_per_acquisition_time
+  scan%MDS_1km                        = MDS_1km
 
   scan%seconds_for_scan_cycle         = -1.E36 !  Computed after we've read the Scanning Table and 
   !  know how many beams we're going to have in our sweeps.

@@ -405,8 +405,9 @@ contains
                 sw_h2 = (sin(elev*d2r)*sin(elev*d2r)) * sum(dDVh,mask=Zhh>Zthr)/Zhhptr(igate,iray)
                 SWtotptr(igate,iray) = sqrt(sw_h2 + sw_t2 + sw_s2 + sw_v2)
                 SWhptr(igate,iray) = sqrt(sw_h2)
-               ! print *, "IGATE, IRAY = ", igate, iray
-               ! print *, "sw_h2, sw_t2, sw_s2, sw_v2, SWtot = ", sw_h2, sw_t2, sw_s2, sw_v2, SWtotptr(igate,iray)
+               !print *, "IGATE, IRAY = ", igate, iray
+               !print *, "sw_h2, sw_t2, sw_s2, sw_v2, SWtot = ", sw_h2, sw_t2, sw_s2, sw_v2, SWtotptr(igate,iray)
+               !print *, "Ku, Kv, Kw, elevx, azim = ", Ku, Kv, Kw, elevx, azim
                                 
             else
                 zhhptr(igate,iray) = -9999.
@@ -7270,12 +7271,16 @@ contains
     !
     ! wind shear term
     !
-    Kr    =    Kx*dcos(azim*d2r)*dcos(elev*d2r)     + Ky*dsin(azim*d2r)*dcos(elev*d2r)    + Kz*dsin(elev*d2r)
-    Kelev =    Kx*dcos(azim*d2r)*dsin(elev*d2r)     + Ky*dsin(azim*d2r)*dsin(elev*d2r)    - Kz*dcos(elev*d2r)
-    !Kazim =  - Kx*dsin(azim*d2r)*dcos(elev*d2r)     + Ky*dcos(azim*d2r)*dcos(elev*d2r)    
-    Kazim =  - Kx*dsin(azim*d2r)                    + Ky*dsin(azim*d2r)
+    if (ABS(Kx) < 9999. .and. ABS(Ky) < 9999. .and. ABS(Kz) < 9999.) then
+       Kr    =    Kx*dcos(azim*d2r)*dcos(elev*d2r)     + Ky*dsin(azim*d2r)*dcos(elev*d2r)    + Kz*dsin(elev*d2r)
+       Kelev =    Kx*dcos(azim*d2r)*dsin(elev*d2r)     + Ky*dsin(azim*d2r)*dsin(elev*d2r)    - Kz*dcos(elev*d2r)
+       !Kazim =  - Kx*dsin(azim*d2r)*dcos(elev*d2r)     + Ky*dcos(azim*d2r)*dcos(elev*d2r)    
+       Kazim =  - Kx*dsin(azim*d2r)                    + Ky*dsin(azim*d2r)
     !
-    sw_s2= (sigma_r*Kr)*(sigma_r*Kr)  +   (sigma_theta*Kelev)*(sigma_theta*Kelev)   +  (sigma_theta*Kazim)*(sigma_theta*Kazim)
+       sw_s2= (sigma_r*Kr)*(sigma_r*Kr)  +   (sigma_theta*Kelev)*(sigma_theta*Kelev)   +  (sigma_theta*Kazim)*(sigma_theta*Kazim)
+    else
+       sw_s2 = 0.
+    endif
     ! 
     ! cross wind term
     !

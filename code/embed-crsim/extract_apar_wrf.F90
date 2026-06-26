@@ -10,6 +10,7 @@ program extract_apar
   use module_flightpath, only : aircraft_metadata_type
   use module_flightpath, only : flightpath_class
   use module_scanning,   only : scan_type
+  use module_scanning,   only : scan_type_idt
   use module_cfradial_output, only : cfradial_type
   use module_cfradial_output, only : volume_type
   use module_cfradial_output, only : volume_field_type
@@ -65,14 +66,16 @@ program extract_apar
 
   type(aircraft_metadata_type)     :: aircraft
   type(volume_field_type), pointer :: ptr
+  !type(volume_field_type), pointer :: temporary_ptr      ! Added for the updated sidelobe handling (BWK, 5/19/26)
 
   type (wrf_metadata_type) :: metaA! (40)  ! Assigned this value to account for maximum number of processors allowed
   type (wrf_metadata_type) :: metaB! (40)
 
   type panel_type
       character(len=1024)     :: output_filename_format_string
-      type(scan_type)         :: scan
+      type(scan_type_idt)     :: scan
       type(volume_type)       :: volume
+      type(volume_type)       :: temp_volume            ! Added to deal with sidelobe handling (BWK, 5/19/26)
       integer                 :: sweep_number = 0
       integer                 :: scan_cycles_per_volume
       logical                 :: update_flag
@@ -82,7 +85,9 @@ program extract_apar
   end type panel_type
   type(panel_type), dimension(256), target :: panel
   type(volume_type), pointer :: volume => NULL()
-  type(scan_type),   pointer :: scan => NULL()
+  !type(volume_type), pointer :: temp_volume => NULL()
+  !type(volume_type), target :: temp_volume
+  type(scan_type_idt),   pointer :: scan => NULL()
   integer,           pointer :: scan_cycles_per_volume => NULL()
 
   character(len=1024) :: namelist_file = ""
@@ -113,18 +118,34 @@ program extract_apar
 
   integer          :: isweep
   integer          :: ibeam
+  integer          :: ilobe
   integer          :: nwindow
+  integer, dimension(:,:), allocatable          :: numvalid ! Goes with the lobe interpolation (06/12/26, BWK)
+  integer, dimension(:,:), allocatable          :: numvalid_Ku, numvalid_U, numvalid_Kv, numvalid_V, numvalid_Kw, numvalid_W ! Goes with the lobe interpolation (06/12/26, BWK)
+  integer, dimension(:,:), allocatable          :: numvalid_HT, numvalid_TEMP, numvalid_RHO_D, numvalid_RHODS ! Goes with the lobe interpolation (06/12/26, BWK)
+  !logical, dimension(:,:), allocatable          :: validmask ! Goes with the lobe interpolation (06/12/26, BWK)
 
   character(len=19) :: wrf_reference_time
-  real(kind=RKIND), pointer, dimension(:,:) :: vx, vy, vz, zindxA, zindxB, Kwork, Kwork2, Kwork3
-  !real(kind=RKIND), dimension(:,:), allocatable :: dx_geo
+  !real(kind=RKIND), pointer, dimension(:,:) :: vx, vy, vz, zindxA, zindxB, Kwork, Kwork2, Kwork3 ! Original dimensions (BWK< 05/07/26)
+  real(kind=RKIND), pointer, dimension(:,:) :: Kwork, Kwork2, Kwork3 ! Original dimensions (BWK< 05/07/26)
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx, vy, vz, zindxA, zindxB ! Updated dimensions to account for M+S lobes (BWK, 05/07/26)
+  real(kind=RKIND), dimension(:,:), allocatable :: temporary_ptr  
+  real(kind=RKIND), dimension(:,:), allocatable :: temporary_ptr_Ku, temporary_ptr_U, temporary_ptr_Kv, temporary_ptr_V, temporary_ptr_Kw, temporary_ptr_W 
+  real(kind=RKIND), dimension(:,:), allocatable :: temporary_ptr_HT, temporary_ptr_TEMP, temporary_ptr_RHO_D, temporary_ptr_RHODS
   real(kind=RKIND)    ::  mean_dxgeo ! Mean value determined in the projection code
 
   !  Beamwidth vertex points
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_ul, vy_ul, vz_ul, zindxA_ul, zindxB_ul
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_ur, vy_ur, vz_ur, zindxA_ur, zindxB_ur
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_lr, vy_lr, vz_lr, zindxA_lr, zindxB_lr
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_ll, vy_ll, vz_ll, zindxA_ll, zindxB_ll
+  ! Original 2-d vertex pointers 
+  !real(kind=RKIND), pointer, dimension(:,:) :: vx_ul, vy_ul, vz_ul, zindxA_ul, zindxB_ul
+  !real(kind=RKIND), pointer, dimension(:,:) :: vx_ur, vy_ur, vz_ur, zindxA_ur, zindxB_ur
+  !real(kind=RKIND), pointer, dimension(:,:) :: vx_lr, vy_lr, vz_lr, zindxA_lr, zindxB_lr
+  !real(kind=RKIND), pointer, dimension(:,:) :: vx_ll, vy_ll, vz_ll, zindxA_ll, zindxB_ll
+
+  ! Updated vertex pointers to account for addition of main+side lobe structure (BWK, 05/07/26)
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_ul, vy_ul, vz_ul, zindxA_ul, zindxB_ul
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_ur, vy_ur, vz_ur, zindxA_ur, zindxB_ur
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_lr, vy_lr, vz_lr, zindxA_lr, zindxB_lr
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_ll, vy_ll, vz_ll, zindxA_ll, zindxB_ll
 
   type(flightpath_class) :: flightpath
   real(kind=RKIND)       :: beamtime
@@ -458,6 +479,7 @@ program extract_apar
       volume%beams_per_acquisition_time(:) = scan%beams_per_acquisition_time
 
       volume%nrays = scan%beam_count
+      volume%nlobes = scan%nlobes
       if (volume%nrays > size(volume%time)) then
           write(*, '(/,"   *****")')
           write(*, '("   *****   Number of rays in scanning table exceeds size allocated in ")')
@@ -470,37 +492,40 @@ program extract_apar
           stop "MAX_RAYS EXCEEDED"
       endif
 
-      zindxA => volume%new_array("ZINDXA")
-      zindxB => volume%new_array("ZINDXB")
-      vx   => volume%new_array("VX")
-      vy   => volume%new_array("VY")
-      vz   => volume%new_array("VZ")
+      ! Updated these new arrays to be of type 3D, to account for the main+side lobe structure (BWK, 05/07/26)
+      zindxA => volume%new_array_3D("ZINDXA")
+      zindxB => volume%new_array_3D("ZINDXB")
+      vx   => volume%new_array_3D("VX")
+      vy   => volume%new_array_3D("VY")
+      vz   => volume%new_array_3D("VZ")
+
+      print *, 'SIZE VX = ', size(vx)
 
       if (bwtype > 0) then
           !   BW x, y, z indices, UL, UR, LR, LL
-          zindxA_ul  => volume%new_array("ZINDXA_UL")
-          zindxB_ul  => volume%new_array("ZINDXB_UL")
-          vx_ul => volume%new_array("VX_UL")
-          vy_ul => volume%new_array("VY_UL")
-          vz_ul => volume%new_array("VZ_UL")
+          zindxA_ul  => volume%new_array_3D("ZINDXA_UL")
+          zindxB_ul  => volume%new_array_3D("ZINDXB_UL")
+          vx_ul => volume%new_array_3D("VX_UL")
+          vy_ul => volume%new_array_3D("VY_UL")
+          vz_ul => volume%new_array_3D("VZ_UL")
 
-          zindxA_ur  => volume%new_array("ZINDXA_UR")
-          zindxB_ur  => volume%new_array("ZINDXB_UR")
-          vx_ur => volume%new_array("VX_UR")
-          vy_ur => volume%new_array("VY_UR")
-          vz_ur => volume%new_array("VZ_UR")
+          zindxA_ur  => volume%new_array_3D("ZINDXA_UR")
+          zindxB_ur  => volume%new_array_3D("ZINDXB_UR")
+          vx_ur => volume%new_array_3D("VX_UR")
+          vy_ur => volume%new_array_3D("VY_UR")
+          vz_ur => volume%new_array_3D("VZ_UR")
 
-          zindxA_lr  => volume%new_array("ZINDXA_LR")
-          zindxB_lr  => volume%new_array("ZINDXB_LR")
-          vx_lr => volume%new_array("VX_LR")
-          vy_lr => volume%new_array("VY_LR")
-          vz_lr => volume%new_array("VZ_LR")
+          zindxA_lr  => volume%new_array_3D("ZINDXA_LR")
+          zindxB_lr  => volume%new_array_3D("ZINDXB_LR")
+          vx_lr => volume%new_array_3D("VX_LR")
+          vy_lr => volume%new_array_3D("VY_LR")
+          vz_lr => volume%new_array_3D("VZ_LR")
 
-          zindxA_ll  => volume%new_array("ZINDXA_LL")
-          zindxB_ll  => volume%new_array("ZINDXB_LL")
-          vx_ll => volume%new_array("VX_LL")
-          vy_ll => volume%new_array("VY_LL")
-          vz_ll => volume%new_array("VZ_LL")
+          zindxA_ll  => volume%new_array_3D("ZINDXA_LL")
+          zindxB_ll  => volume%new_array_3D("ZINDXB_LL")
+          vx_ll => volume%new_array_3D("VX_LL")
+          vy_ll => volume%new_array_3D("VY_LL")
+          vz_ll => volume%new_array_3D("VZ_LL")
       endif
 
       call timer_pause("PRESWEEP")
@@ -537,32 +562,41 @@ program extract_apar
               call flightpath%getloc(beamtime, proj, mean_dxgeo, aircraft, error_flag)
               if ( error_flag > 0 ) exit LEG
 
+              ! This is a new loop structure to loop over the main lobe and up to 4 positional sidelobes (BK, 5/6/26)
+              call timer_resume("LOBE_LOOP")
+              LOBE_LOOP : do ilobe = 1, scan%nlobes
+
               ! Fill in beam-specific details of the volume structure.
               !call beam_geometry ( aircraft , scan , iray , volume , proj%dx, conf%Theta1, bwtype, options%ref_angle )
-              call beam_geometry ( aircraft , scan , iray , volume , mean_dxgeo, conf%Theta1, bwtype, options%ref_angle )
+              call beam_geometry ( aircraft , scan , iray , ilobe, volume , mean_dxgeo, conf%Theta1, bwtype, options%ref_angle )
 
-              call timer_resume("GATE_LOOP")
-              GATE_LOOP : do igate = 1, volume%ngates
+                call timer_resume("GATE_LOOP")
+                GATE_LOOP : do igate = 1, volume%ngates
 
-                  zindxA(igate,iray) = metaA%find_z_index(vx(igate,iray), vy(igate,iray), vz(igate,iray))
+                  ! The arrays now match the new size which includes the additional lobes in the first dimension (BWK, 05/07/26)
+                  ! The original version does not have the 'ilobe' dimension
+                  zindxA(ilobe,igate,iray) = metaA%find_z_index(vx(ilobe,igate,iray), vy(ilobe,igate,iray), vz(ilobe,igate,iray))
                   if (bwtype > 0) then
-                      zindxA_ul(igate,iray) = metaA%find_z_index(vx_ul(igate,iray), vy_ul(igate,iray), vz_ul(igate,iray))
-                      zindxA_ur(igate,iray) = metaA%find_z_index(vx_ur(igate,iray), vy_ur(igate,iray), vz_ur(igate,iray))
-                      zindxA_lr(igate,iray) = metaA%find_z_index(vx_lr(igate,iray), vy_lr(igate,iray), vz_lr(igate,iray))
-                      zindxA_ll(igate,iray) = metaA%find_z_index(vx_ll(igate,iray), vy_ll(igate,iray), vz_ll(igate,iray))
+                      zindxA_ul(ilobe,igate,iray) = metaA%find_z_index(vx_ul(ilobe,igate,iray), vy_ul(ilobe,igate,iray), vz_ul(ilobe,igate,iray))
+                      zindxA_ur(ilobe,igate,iray) = metaA%find_z_index(vx_ur(ilobe,igate,iray), vy_ur(ilobe,igate,iray), vz_ur(ilobe,igate,iray))
+                      zindxA_lr(ilobe,igate,iray) = metaA%find_z_index(vx_lr(ilobe,igate,iray), vy_lr(ilobe,igate,iray), vz_lr(ilobe,igate,iray))
+                      zindxA_ll(ilobe,igate,iray) = metaA%find_z_index(vx_ll(ilobe,igate,iray), vy_ll(ilobe,igate,iray), vz_ll(ilobe,igate,iray))
                   endif
                   if ( time_interpolation_factor < 1.0 ) then
-                      ZindxB(igate,iray) = metaB%find_z_index(vx(igate,iray), vy(igate,iray), vz(igate,iray))
+                      ZindxB(ilobe,igate,iray) = metaB%find_z_index(vx(ilobe,igate,iray), vy(ilobe,igate,iray), vz(ilobe,igate,iray))
                       if (bwtype > 0) then
-                          zindxB_ul(igate,iray) = metaB%find_z_index(vx_ul(igate,iray), vy_ul(igate,iray), vz_ul(igate,iray))
-                          zindxB_ur(igate,iray) = metaB%find_z_index(vx_ur(igate,iray), vy_ur(igate,iray), vz_ur(igate,iray))
-                          zindxB_lr(igate,iray) = metaB%find_z_index(vx_lr(igate,iray), vy_lr(igate,iray), vz_lr(igate,iray))
-                          zindxB_ll(igate,iray) = metaB%find_z_index(vx_ll(igate,iray), vy_ll(igate,iray), vz_ll(igate,iray))
+                          zindxB_ul(ilobe,igate,iray) = metaB%find_z_index(vx_ul(ilobe,igate,iray), vy_ul(ilobe,igate,iray), vz_ul(ilobe,igate,iray))
+                          zindxB_ur(ilobe,igate,iray) = metaB%find_z_index(vx_ur(ilobe,igate,iray), vy_ur(ilobe,igate,iray), vz_ur(ilobe,igate,iray))
+                          zindxB_lr(ilobe,igate,iray) = metaB%find_z_index(vx_lr(ilobe,igate,iray), vy_lr(ilobe,igate,iray), vz_lr(ilobe,igate,iray))
+                          zindxB_ll(ilobe,igate,iray) = metaB%find_z_index(vx_ll(ilobe,igate,iray), vy_ll(ilobe,igate,iray), vz_ll(ilobe,igate,iray))
                       endif
                   endif
 
-              enddo GATE_LOOP
-              call timer_pause("GATE_LOOP")
+                enddo GATE_LOOP
+                call timer_pause("GATE_LOOP")
+
+              enddo LOBE_LOOP
+              call timer_pause("LOBE_LOOP")
 
           enddo BEAM_LOOP
           call timer_pause("BEAM_LOOP")
@@ -590,7 +624,7 @@ program extract_apar
           case ( "sector" )
               select case (scan%primary_axis)
               case ("Z", "axis_z")
-                  volume%fixed_angle(volume%sweep) = scan%tilt( scan%sweep_start_index(isweep) + 1 )
+                  volume%fixed_angle(volume%sweep) = scan%tilt( scan%sweep_start_index(isweep) + 1, 1 )
               case default
                   write(*,'("Unrecognized primary axis (",A,") for sweep_moode = "A)') trim(scan%primary_axis), trim(scan%sweep_mode)
                   stop
@@ -598,9 +632,9 @@ program extract_apar
           case ( "elevation_surveillance" )
                 select case (scan%primary_axis)
                 case ("Z", "axis_z")
-                   volume%fixed_angle(volume%sweep) = scan%tilt( scan%sweep_start_index(isweep) + 1 )
+                   volume%fixed_angle(volume%sweep) = scan%tilt( scan%sweep_start_index(isweep) + 1, 1 )
                 case ("Y-Prime", "axis_y_prime")
-                   volume%fixed_angle(volume%sweep) = volume%tilt( scan%sweep_start_index(isweep) + 1 )
+                   volume%fixed_angle(volume%sweep) = scan%tilt( scan%sweep_start_index(isweep) + 1, 1 )
                 case default
                    write(*,'("Unrecognized primary axis (",A,") for sweep_moode = "A)') trim(scan%primary_axis), trim(scan%sweep_mode)
                    stop
@@ -627,6 +661,35 @@ program extract_apar
       call timer_resume("POSTSWEEP")
 
       call timer_resume("PTR_INTERP")
+      ! This is a new loop structure to loop over the main lobe and up to 4 positional sidelobes (BK, 5/6/26)
+      call timer_resume("LOBE_LOOP_INTERP")
+      !LOBE_LOOP2 : do ilobe = 1, 2 !scan%nlobes
+      !print *, 'LOBE_LOOP2 = ', ilobe
+
+      ! Added this section to create temporary pointer to data for adding in the individual lobes (BWK, 5/19/26)
+      !ptr => volume%next_point ( NULL() )
+      
+      !if (ilobe == 1) then
+      !    temporary_ptr => temp_volume%next_point ( NULL() )
+      !    do while ( associated ( temporary_ptr ) )
+      !       print *,'Temporary Pointer source ',temporary_ptr%source
+      !       select case ( temporary_ptr%source )
+      !       case ( "WRF" )
+      !          call timer_resume("PTRALLOC")
+      !          if ( allocated (temporary_ptr%data) ) then
+      !             write(*,'("temporary_ptr%field_name ", A, " already allocated.")') trim(temporary_ptr%field_name)
+      !          else
+      !             allocate ( temporary_ptr%data ( volume%ngates, volume%nrays ) )
+      !          endif
+      !          call timer_pause("PTRALLOC")
+      !       end select
+      !       print *,'Temporary Field name ',temporary_ptr%field_name
+      !       temporary_ptr => temp_volume%next_point(temporary_ptr)
+      !       
+      !    enddo 
+      !endif
+      
+
       ptr => volume%next_point ( NULL() )
       do while ( associated ( ptr ) )
           print *,'Pointer source ',ptr%source
@@ -656,29 +719,72 @@ program extract_apar
                   continue
               else
                   call timer_resume("VARINTERP")
+                  !print *, 'BWTYPE = ',bwtype
                   if (bwtype == 0) then
-                      call metaA%interp ( vx , vy , zindxA , ptr%field_name , ptr%data )
+                      call metaA%interp ( vx(ilobe,:,:) , vy(ilobe,:,:) , zindxA(ilobe,:,:) , ptr%field_name , ptr%data )
                       if (time_interpolation_factor < 1.0 ) then
                           allocate(Kwork(volume%ngates, volume%nrays))
-                          call metaB%interp ( vx , vy , zindxB , ptr%field_name , Kwork )
+                          call metaB%interp ( vx(ilobe,:,:) , vy(ilobe,:,:) , zindxB(ilobe,:,:) , ptr%field_name , Kwork )
                           ptr%data = ptr%data*time_interpolation_factor + Kwork*(1.0-time_interpolation_factor)
                           deallocate(Kwork)
                       endif
                   else
+                      LOBE_LOOP2 : do ilobe = 1, scan%nlobes
+                      print *, 'LOBE_LOOP2 = ', ilobe
+                        if (ilobe == 1) then
+                          print *, 'Allocating temporary_ptr'
+                          allocate(temporary_ptr(volume%ngates,volume%nrays))
+                          allocate(numvalid(volume%ngates,volume%nrays))
+                          temporary_ptr(:,:) = 0.0
+                          numvalid(:,:) = 0
+                         !print *, temporary_ptr(:,:)
+                         !temporary_ptr => ptr
+                        endif
+
                       !call metaA%interp_varbw ("A", bwtype, volume, scan, proj%dx, ptr%field_name, ptr%data )
-                      call metaA%interp_varbw ("A", bwtype, volume, scan, mean_dxgeo, ptr%field_name, ptr%data )
-                      if (time_interpolation_factor < 1.0 ) then
+                        call metaA%interp_varbw ("A", bwtype, volume, scan, ilobe, mean_dxgeo, ptr%field_name, ptr%data )
+                        if (time_interpolation_factor < 1.0 ) then
                           allocate(Kwork(volume%ngates, volume%nrays))
+
                           !call metaB%interp_varbw ("B", bwtype, volume, scan, proj%dx, ptr%field_name, Kwork )
-                          call metaB%interp_varbw ("B", bwtype, volume, scan, mean_dxgeo, ptr%field_name, Kwork )
+                          call metaB%interp_varbw ("B", bwtype, volume, scan, ilobe, mean_dxgeo, ptr%field_name, Kwork )
                           ptr%data = ptr%data*time_interpolation_factor + Kwork*(1.0-time_interpolation_factor)
+
+                          !print *, 'PTR data = '
+                          !print *, ptr%data
+                          GATE_LOOP2 : do igate = 1, volume%ngates
+                             BEAM_LOOP2 : do iray = 1, volume%nrays
+                                 if (ptr%data(igate,iray) > 0.) then
+                                    temporary_ptr(igate,iray) = temporary_ptr(igate,iray) + ptr%data(igate,iray)
+                                    numvalid(igate,iray) = numvalid(igate,iray)+1
+                                 endif
+                             enddo BEAM_LOOP2
+                          enddo GATE_LOOP2       
                           deallocate(Kwork)
-                      endif
+
+                        endif
+
+                        if (ilobe == scan%nlobes) then
+                        !if (ilobe == 2) then
+                           ptr%data = temporary_ptr / numvalid
+
+                           do igate = 1, volume%ngates
+                              do iray = 1, volume%nrays
+                                  if (ISNAN(ptr%data(igate,iray)) ) then
+                                      ptr%data(igate,iray) = -9999.0
+                                  endif
+                              enddo
+                           enddo
+  
+                           deallocate(temporary_ptr)
+                           deallocate(numvalid)
+                        endif
+                      enddo LOBE_LOOP2
                   endif
+
                   call timer_pause("VARINTERP")
               endif
           end select
-          print *,'Field name ',ptr%field_name
           ptr => volume%next_point(ptr)
       enddo
       call timer_pause("PTR_INTERP")
@@ -687,81 +793,160 @@ program extract_apar
       !  Put this section into a subroutine (in a module or class somewhere, or maybe standalone?)
       call timer_resume("KU_INTERP")
 
-      ! Compute Ku at time A
-      Kwork => volume%new_array("Ku")
-      Kwork2 => volume%point_to_data("U")
-      print *,'Size Kwork2',size(Kwork,2),size(Kwork,1)
-      if (bwtype == 0) then
-          call metaA%Ku(vx, vy, zindxA, Kwork, Kwork2)
-      else
-          !call metaA%Ku_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
-          call metaA%Ku_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
-      endif
+      LOBE_LOOP_UINTERP : do ilobe = 1, scan%nlobes
+      print *, 'LOBE_LOOPKU = ', ilobe
 
-      nullify(Kwork)
-      nullify(Kwork2)
+         if (ilobe == 1) then ! Added for accounting for the lobe loop
+            print *, 'Allocating temporary_ptr_Ku'
+            allocate(temporary_ptr_Ku(volume%ngates,volume%nrays))
+            allocate(numvalid_Ku(volume%ngates,volume%nrays))
+            allocate(temporary_ptr_U(volume%ngates,volume%nrays))
+            allocate(numvalid_U(volume%ngates,volume%nrays))
+
+            temporary_ptr_Ku(:,:) = 0.0
+            numvalid_Ku(:,:) = 0
+            temporary_ptr_U(:,:) = 0.0
+            numvalid_U(:,:) = 0
+            
+         endif
+      
+      ! Compute Ku at time A
+          Kwork => volume%new_array("Ku")
+          Kwork2 => volume%point_to_data("U")
+          print *,'Size Kwork2',size(Kwork,2),size(Kwork,1)
+          if (bwtype == 0) then
+            call metaA%Ku(vx(ilobe,:,:), vy(ilobe,:,:), zindxA(ilobe,:,:), Kwork, Kwork2)
+          else
+          !call metaA%Ku_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
+            call metaA%Ku_varbw("A", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2)
+          endif
+
+          nullify(Kwork)
+          nullify(Kwork2)
 
       ! Interpolate U and Ku to appropriate time
-      if (time_interpolation_factor < 1.0 ) then
+          if (time_interpolation_factor < 1.0 ) then
 
           ! Compute Ku at time B
-          Kwork => volume%new_array("Ku_timeB")
-          Kwork2 => volume%new_array("U_timeB")
-          if (bwtype == 0) then
-              call metaB%Ku(vx, vy, zindxB, Kwork, Kwork2)
-          else
+            Kwork => volume%new_array("Ku_timeB")
+            Kwork2 => volume%new_array("U_timeB")
+            if (bwtype == 0) then
+              call metaB%Ku(vx(ilobe,:,:), vy(ilobe,:,:), zindxB(ilobe,:,:), Kwork, Kwork2)
+            else
               !call metaB%Ku_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
-              call metaB%Ku_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
+              call metaB%Ku_varbw("B", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2)
+            endif
+            nullify(Kwork)
+            nullify(Kwork2)
+
+            Kwork => volume%point_to_data("U")
+            Kwork2 => volume%point_to_data("U_timeB")
+            where (Kwork > -9998 .and. Kwork2 > -9998)
+              Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_U = temporary_ptr_U + Kwork
+              numvalid_U = numvalid_U+1
+            elsewhere
+              Kwork = -9999.0
+            end where
+
+            !print *, 'Lobe number = ', ilobe
+            !  print *, 'Kwork = U = ', Kwork
+            nullify(Kwork)
+            nullify(Kwork2)
+
+            Kwork => volume%point_to_data("Ku")
+            Kwork2 => volume%point_to_data("Ku_timeB")
+            where (Kwork > -9998 .and. Kwork2 > -9998)
+              Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_Ku = temporary_ptr_Ku + Kwork
+              numvalid_Ku = numvalid_Ku+1
+            elsewhere
+              Kwork = -9999.0
+            end where
+
+            !print *, 'Lobe number = ', ilobe
+            !  print *, 'Kwork = Ku = ', Kwork
+            nullify(Kwork)
+            nullify(Kwork2)
           endif
-          nullify(Kwork)
-          nullify(Kwork2)
 
-          Kwork => volume%point_to_data("U")
-          Kwork2 => volume%point_to_data("U_timeB")
-          where (Kwork > -9998 .and. Kwork2 > -9998)
-              Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
-          elsewhere
-              Kwork = -9999.0
-          end where
-          nullify(Kwork)
-          nullify(Kwork2)
+          
+          if (ilobe == scan%nlobes) then
+             Kwork => volume%point_to_data("Ku")
+             Kwork2 => volume%point_to_data("U")
 
-          Kwork => volume%point_to_data("Ku")
-          Kwork2 => volume%point_to_data("Ku_timeB")
-          where (Kwork > -9998 .and. Kwork2 > -9998)
-              Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
-          elsewhere
-              Kwork = -9999.0
-          end where
-          nullify(Kwork)
-          nullify(Kwork2)
-      endif
-      call timer_pause("KU_INTERP")
+             !print *, 'Numvalid Ku = ', numvalid_Ku
+             !print *, 'Numvalid U = ', numvalid_U
+
+             Kwork = temporary_ptr_Ku  / numvalid_Ku
+             Kwork2 = temporary_ptr_U  / numvalid_U
+
+             where (ISNAN(Kwork)) 
+                Kwork = -9999.0
+             end where
+
+             where (ISNAN(Kwork2)) 
+                Kwork2 = -9999.0
+             end where
+
+             !print *, 'Ku data = '
+             !print *, Kwork
+
+             !print *, 'U data = '
+             !print *, Kwork2
+                            
+  
+                deallocate(temporary_ptr_U)
+                deallocate(temporary_ptr_Ku)
+                deallocate(numvalid_U)
+                deallocate(numvalid_Ku)
+                nullify(Kwork)
+                nullify(Kwork2)
+          endif
+        enddo LOBE_LOOP_UINTERP
+        call timer_pause("KU_INTERP")
 
       !  Treat time evolution between WRF history snapshots for other derived fields.
       call timer_resume("KV_INTERP")
-      Kwork => volume%new_array("Kv")
-      Kwork2 => volume%point_to_data("V")
-      if (bwtype == 0) then
-         call metaA%Kv(vx, vy, zindxA, Kwork, Kwork2)
-      else
+      LOBE_LOOP_VINTERP : do ilobe = 1, scan%nlobes
+        print *, 'LOBE_LOOPKV = ', ilobe
+
+        if (ilobe == 1) then ! Added for accounting for the lobe loop
+            print *, 'Allocating temporary_ptr_Kv'
+            allocate(temporary_ptr_Kv(volume%ngates,volume%nrays))
+            allocate(numvalid_Kv(volume%ngates,volume%nrays))
+            allocate(temporary_ptr_V(volume%ngates,volume%nrays))
+            allocate(numvalid_V(volume%ngates,volume%nrays))
+
+            temporary_ptr_Kv(:,:) = 0.0
+            numvalid_Kv(:,:) = 0
+            temporary_ptr_V(:,:) = 0.0
+            numvalid_V(:,:) = 0
+            
+         endif
+
+        Kwork => volume%new_array("Kv")
+        Kwork2 => volume%point_to_data("V")
+        if (bwtype == 0) then
+         call metaA%Kv(vx(ilobe,:,:), vy(ilobe,:,:), zindxA(ilobe,:,:), Kwork, Kwork2)
+        else
          !call metaA%Kv_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2)   ! Added by B. Klotz (12/18/2023), part of the variable beamwidth
-         call metaA%Kv_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
-      endif
-      nullify(Kwork)
-      nullify(Kwork2)
+         call metaA%Kv_varbw("A", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2)
+        endif
+        nullify(Kwork)
+        nullify(Kwork2)
 
       ! Interpolate V and Kv to appropriate time
-      if (time_interpolation_factor < 1.0 ) then
+        if (time_interpolation_factor < 1.0 ) then
 
           ! Compute Kv at time B
           Kwork => volume%new_array("Kv_timeB")
           Kwork2 => volume%new_array("V_timeB")
           if (bwtype == 0) then
-             call metaB%Kv(vx, vy, zindxB, Kwork, Kwork2)
+             call metaB%Kv(vx(ilobe,:,:), vy(ilobe,:,:), zindxB(ilobe,:,:), Kwork, Kwork2)
           else
              !call metaB%Kv_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2)
-             call metaB%Kv_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2)
+             call metaB%Kv_varbw("B", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2)
           endif
           nullify(Kwork)
           nullify(Kwork2)
@@ -770,6 +955,8 @@ program extract_apar
           Kwork2 => volume%point_to_data("V_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_V = temporary_ptr_V + Kwork
+              numvalid_V = numvalid_V+1
           elsewhere
               Kwork = -9999.0
           end where
@@ -780,41 +967,93 @@ program extract_apar
           Kwork2 => volume%point_to_data("Kv_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_Kv = temporary_ptr_Kv + Kwork
+              numvalid_Kv = numvalid_Kv+1
           elsewhere
               Kwork = -9999.0
           end where
           nullify(Kwork)
           nullify(Kwork2)
 
-      endif
+          if (ilobe == scan%nlobes) then
+             Kwork => volume%point_to_data("Kv")
+             Kwork2 => volume%point_to_data("V")
+
+             !print *, 'Numvalid Kv = ', numvalid_Kv
+             !print *, 'Numvalid V = ', numvalid_V
+
+             Kwork = temporary_ptr_Kv / numvalid_Kv
+             Kwork2 = temporary_ptr_V / numvalid_V
+
+             where (ISNAN(Kwork)) 
+                Kwork = -9999.0
+             end where
+
+             where (ISNAN(Kwork2)) 
+                Kwork2 = -9999.0
+             end where
+
+             !print *, 'V data = ', Kwork2               
+  
+                deallocate(temporary_ptr_V)
+                deallocate(temporary_ptr_Kv)
+                deallocate(numvalid_V)
+                deallocate(numvalid_Kv)
+                nullify(Kwork)
+                nullify(Kwork2)
+          endif
+
+        endif
+      enddo LOBE_LOOP_VINTERP
       call timer_pause("KV_INTERP")
 
       ! treat time evolution with multiple WRF datasets (metaA and metaB).
       call timer_resume("KW_INTERP")
-      Kwork => volume%new_array("Kw")
-      Kwork2 => volume%point_to_data("W")
-      Kwork3 => volume%point_to_data("HT")
-      if (bwtype == 0) then
-          call metaA%Kw(vx, vy, zindxA, Kwork, Kwork2, Kwork3)
-      else
+      LOBE_LOOP_WINTERP : do ilobe = 1, scan%nlobes
+        print *, 'LOBE_LOOPKW = ', ilobe
+
+        if (ilobe == 1) then ! Added for accounting for the lobe loop
+            print *, 'Allocating temporary_ptr_Kw'
+            allocate(temporary_ptr_Kw(volume%ngates,volume%nrays))
+            allocate(numvalid_Kw(volume%ngates,volume%nrays))
+            allocate(temporary_ptr_W(volume%ngates,volume%nrays))
+            allocate(numvalid_W(volume%ngates,volume%nrays))
+            allocate(temporary_ptr_HT(volume%ngates,volume%nrays))
+            allocate(numvalid_HT(volume%ngates,volume%nrays))
+
+            temporary_ptr_Kw(:,:) = 0.0
+            numvalid_Kw(:,:) = 0
+            temporary_ptr_W(:,:) = 0.0
+            numvalid_W(:,:) = 0
+            temporary_ptr_HT(:,:) = 0.0
+            numvalid_HT(:,:) = 0
+            
+         endif
+
+        Kwork => volume%new_array("Kw")
+        Kwork2 => volume%point_to_data("W")
+        Kwork3 => volume%point_to_data("HT")
+        if (bwtype == 0) then
+          call metaA%Kw(vx(ilobe,:,:), vy(ilobe,:,:), zindxA(ilobe,:,:), Kwork, Kwork2, Kwork3)
+        else
           !call metaA%Kw_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
-          call metaA%Kw_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
-      endif
-      nullify(Kwork)
-      nullify(Kwork2)
-      nullify(Kwork3)
+          call metaA%Kw_varbw("A", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2, Kwork3)
+        endif
+        nullify(Kwork)
+        nullify(Kwork2)
+        nullify(Kwork3)
 
       ! Interpolate W and Kw to appropriate time
-      if (time_interpolation_factor < 1.0 ) then
+        if (time_interpolation_factor < 1.0 ) then
           ! Compute Kw at time B
           Kwork => volume%new_array("Kw_timeB")
           Kwork2 => volume%new_array("W_timeB")
           Kwork3 => volume%new_array("HT_timeB")
           if (bwtype == 0) then
-              call metaB%Kw(vx, vy, zindxB, Kwork, Kwork2, Kwork3)
+              call metaB%Kw(vx(ilobe,:,:), vy(ilobe,:,:), zindxB(ilobe,:,:), Kwork, Kwork2, Kwork3)
           else
               !call metaB%Kw_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
-              call metaB%Kw_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
+              call metaB%Kw_varbw("B", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2, Kwork3)
           endif
           nullify(Kwork)
           nullify(Kwork2)
@@ -824,6 +1063,8 @@ program extract_apar
           Kwork2 => volume%point_to_data("W_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_W = temporary_ptr_W + Kwork
+              numvalid_W = numvalid_W+1
           elsewhere
               Kwork = -9999.0
           end where
@@ -834,6 +1075,8 @@ program extract_apar
           Kwork2 => volume%point_to_data("Kw_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_Kw = temporary_ptr_Kw + Kwork
+              numvalid_Kw = numvalid_Kw+1
           elsewhere
               Kwork = -9999.0
           end where
@@ -844,40 +1087,100 @@ program extract_apar
           Kwork2 => volume%point_to_data("HT_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_HT = temporary_ptr_HT + Kwork
+              numvalid_HT = numvalid_HT+1
           elsewhere
               Kwork = -9999.0
           end where
           nullify(Kwork)
           nullify(Kwork2)
-      endif
+
+          if (ilobe == scan%nlobes) then
+             Kwork => volume%point_to_data("Kw")
+             Kwork2 => volume%point_to_data("W")
+             Kwork3 => volume%point_to_data("HT")
+
+             Kwork = temporary_ptr_Kw / numvalid_Kw
+             Kwork2 = temporary_ptr_W / numvalid_W
+             Kwork3 = temporary_ptr_HT / numvalid_HT
+
+             where (ISNAN(Kwork)) 
+                Kwork = -9999.0
+             end where
+
+             where (ISNAN(Kwork2)) 
+                Kwork2 = -9999.0
+             end where
+
+             where (ISNAN(Kwork3)) 
+                Kwork3 = -9999.0
+             end where
+
+             print *, 'Kw data = ', Kwork
+                            
+  
+                deallocate(temporary_ptr_W)
+                deallocate(temporary_ptr_Kw)
+                deallocate(temporary_ptr_HT)
+                deallocate(numvalid_W)
+                deallocate(numvalid_Kw)
+                deallocate(numvalid_HT)
+                nullify(Kwork)
+                nullify(Kwork2)
+                nullify(Kwork3)
+          endif
+        endif
+      enddo LOBE_LOOP_WINTERP
+   
       call timer_pause("KW_INTERP")
 
       ! treat time evolution with multiple WRF datasets (metaA and metaB).
       ! All associations of KWork3 are added by BWK, 3/14/2022
       call timer_resume("OTHER_INTERP")
-      Kwork  => volume%point_to_data("RHO_D")
-      Kwork2 => volume%point_to_data("TEMPERATURE")
-      Kwork3 => volume%point_to_data("RHO_DS")
-      if (bwtype == 0) then
-          call metaA%RHO_D(vx, vy, zindxA, Kwork, Kwork2, Kwork3) ! Added Kwork3 (BWK, 3/14/2022)
-      else
-          !call metaA%RHO_D_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
-          call metaA%RHO_D_varbw("A", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
-      endif
-      nullify(Kwork)
-      nullify(Kwork2)
+      LOBE_LOOP_OTHINTERP : do ilobe = 1, scan%nlobes
+        print *, 'LOBE_LOOP_OTHER = ', ilobe
 
-      if (time_interpolation_factor < 1.0) then
+        if (ilobe == 1) then ! Added for accounting for the lobe loop
+            print *, 'Allocating temporary_ptr_RHO_D'
+            allocate(temporary_ptr_RHO_D(volume%ngates,volume%nrays))
+            allocate(numvalid_RHO_D(volume%ngates,volume%nrays))
+            allocate(temporary_ptr_TEMP(volume%ngates,volume%nrays))
+            allocate(numvalid_TEMP(volume%ngates,volume%nrays))
+            allocate(temporary_ptr_RHODS(volume%ngates,volume%nrays))
+            allocate(numvalid_RHODS(volume%ngates,volume%nrays))
+
+            temporary_ptr_RHO_D(:,:) = 0.0
+            numvalid_RHO_D(:,:) = 0
+            temporary_ptr_TEMP(:,:) = 0.0
+            numvalid_TEMP(:,:) = 0
+            temporary_ptr_RHODS(:,:) = 0.0
+            numvalid_RHODS(:,:) = 0
+            
+         endif
+
+        Kwork  => volume%point_to_data("RHO_D")
+        Kwork2 => volume%point_to_data("TEMPERATURE")
+        Kwork3 => volume%point_to_data("RHO_DS")
+        if (bwtype == 0) then
+          call metaA%RHO_D(vx(ilobe,:,:), vy(ilobe,:,:), zindxA(ilobe,:,:), Kwork, Kwork2, Kwork3) ! Added Kwork3 (BWK, 3/14/2022)
+        else
+          !call metaA%RHO_D_varbw("A", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
+          call metaA%RHO_D_varbw("A", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2, Kwork3)
+        endif
+        nullify(Kwork)
+        nullify(Kwork2)
+
+        if (time_interpolation_factor < 1.0) then
           ! Compute RHO_D and TEMPERATURE at time B
           Kwork  => volume%new_array("RHO_D_timeB")
           Kwork2 => volume%new_array("TEMPERATURE_timeB")
           Kwork3 => volume%new_array("RHO_DS_timeB")
 
           if (bwtype == 0) then
-              call metaB%RHO_D(vx, vy, zindxB, Kwork, Kwork2, Kwork3)
+              call metaB%RHO_D(vx(ilobe,:,:), vy(ilobe,:,:), zindxB(ilobe,:,:), Kwork, Kwork2, Kwork3)
           else
               !call metaB%RHO_D_varbw("B", bwtype, volume, scan, proj%dx, Kwork, Kwork2, Kwork3)
-              call metaB%RHO_D_varbw("B", bwtype, volume, scan, mean_dxgeo, Kwork, Kwork2, Kwork3)
+              call metaB%RHO_D_varbw("B", bwtype, volume, scan, ilobe, mean_dxgeo, Kwork, Kwork2, Kwork3)
           endif
           nullify(Kwork)
           nullify(Kwork2)
@@ -887,6 +1190,8 @@ program extract_apar
           Kwork2 => volume%point_to_data("RHO_D_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_RHO_D = temporary_ptr_RHO_D + Kwork
+              numvalid_RHO_D = numvalid_RHO_D+1
           elsewhere
               Kwork = -9999.0
           end where
@@ -897,6 +1202,8 @@ program extract_apar
           Kwork2 => volume%point_to_data("TEMPERATURE_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_TEMP = temporary_ptr_TEMP + Kwork
+              numvalid_TEMP = numvalid_TEMP+1
           elsewhere
               Kwork = -9999.0
           end where
@@ -907,19 +1214,62 @@ program extract_apar
           Kwork2 => volume%point_to_data("RHO_DS_timeB")
           where (Kwork > -9998 .and. Kwork2 > -9998)
               Kwork = Kwork*time_interpolation_factor + Kwork2*(1.0-time_interpolation_factor)
+              temporary_ptr_RHODS = temporary_ptr_RHODS + Kwork
+              numvalid_RHODS = numvalid_RHODS+1
           elsewhere
               Kwork = -9999.0
           end where
           nullify(Kwork)
           nullify(Kwork2)
 
-      endif
+          if (ilobe == scan%nlobes) then
+             Kwork => volume%point_to_data("RHO_D")
+             Kwork2 => volume%point_to_data("TEMPERATURE")
+             Kwork3 => volume%point_to_data("RHO_DS")
+
+             Kwork = temporary_ptr_RHO_D / numvalid_RHO_D
+             Kwork2 = temporary_ptr_TEMP / numvalid_TEMP
+             Kwork3 = temporary_ptr_RHODS / numvalid_RHODS
+
+             where (ISNAN(Kwork)) 
+                Kwork = -9999.0
+             end where
+
+             where (ISNAN(Kwork2)) 
+                Kwork2 = -9999.0
+             end where
+
+             where (ISNAN(Kwork3)) 
+                Kwork3 = -9999.0
+             end where
+
+             !print *, 'TEMP data = ', Kwork2
+                            
+  
+                deallocate(temporary_ptr_RHO_D)
+                deallocate(temporary_ptr_TEMP)
+                deallocate(temporary_ptr_RHODS)
+                deallocate(numvalid_RHO_D)
+                deallocate(numvalid_TEMP)
+                deallocate(numvalid_RHODS)
+                nullify(Kwork)
+                nullify(Kwork2)
+                nullify(Kwork3)
+          endif
+
+        endif
+      enddo LOBE_LOOP_OTHINTERP
+
       call timer_pause("OTHER_INTERP")
       nullify(vx   , vy   , vz   , zindxA   , zindxB   )
       nullify(vx_ul, vy_ul, vz_ul, zindxA_ul, zindxB_ul)
       nullify(vx_ur, vy_ur, vz_ur, zindxA_ur, zindxB_ur)
       nullify(vx_lr, vy_lr, vz_lr, zindxA_lr, zindxB_lr)
       nullify(vx_ll, vy_ll, vz_ll, zindxA_ll, zindxB_ll)
+
+      !enddo LOBE_LOOP_UVW_INTERP
+      call timer_pause("LOBE_LOOP_INTERP")
+      ! This is to ensure that all the lobes are processed appropriately (BWK,5/8/26)
 
       call timer_pause("POSTSWEEP")
 
@@ -960,7 +1310,8 @@ program extract_apar
       !
 
       call timer_resume("SNR")
-      call volume%compute_snr(scan%MDS_1km)
+      !call volume%compute_snr(scan%MDS_1km)
+      call volume%compute_snr(scan%MDS_1km,scan%mds)
       call timer_pause("SNR")
 
       !
@@ -1033,7 +1384,7 @@ program extract_apar
           write(l2,'(A,"_",A,F4.3)') ldate2(1:4)//ldate2(6:7)//ldate2(9:10),ldate2(12:13)//ldate2(15:16)//ldate2(18:19), volume%time(volume%nrays)-floor(volume%time(volume%nrays))
           write(outflnm, trim(panel(ipanel)%output_filename_format_string) ) trim(adjustl(l1)), trim(adjustl(l2))
           call cf%open ( trim(outflnm), trim(panel(ipanel)%namelist_file), scan%meters_between_gates, scan%meters_to_center_of_first_gate, &
-               &         volume%nrays, volume%ngates, volume%sweep, volume%time_coverage_start, &
+               &         volume%nrays, volume%ngates, volume%nlobes, volume%sweep, volume%time_coverage_start, &
                &         volume%fold_limit_lower, volume%fold_limit_upper )
           call cf%prepare_metadata(volume)
           call cf%write_volume(volume, scan%primary_axis, proj)
@@ -1072,6 +1423,7 @@ program extract_apar
       call timer_print("WRFOPEN"     , label="WRF File open total time (s):"      , percent_of=total_cpu_time)
       call timer_print("PRESWEEP"    , label="Pre sweep loop total time (s):"     , percent_of=total_cpu_time)
       call timer_print("GATE_LOOP"   , label="Total gate loop time (s):"          , percent_of=total_cpu_time)
+      call timer_print("LOBE_LOOP"   , label="Total lobe loop time (s):"          , percent_of=total_cpu_time)
       call timer_print("BEAM_LOOP"   , label="Total beam loop time (s):"          , percent_of=total_cpu_time)
       call timer_print("SWEEP_LOOP"  , label="Total sweep loop time (s):"         , percent_of=total_cpu_time)
       call timer_print("PTRALLOC"    , label="Total Pointer allocation time (s):" , percent_of=total_cpu_time)
@@ -1103,16 +1455,18 @@ end program extract_apar
 !------------------------------------------------------------------------------------------------------------------
 !
 
-subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type, pref_ang)
+subroutine beam_geometry(aircraft, scan, ibeam, mslobe, volume, grid_dx, theta1, bw_type, pref_ang)
   use module_configuration, only : RKIND
   use module_geometry,   only : coordinate_transformation
   use module_flightpath, only : aircraft_metadata_type
   use module_scanning,   only : scan_type
+  use module_scanning,   only : scan_type_idt
   use module_cfradial_output, only : volume_type
   implicit none
   type(aircraft_metadata_type), intent(in)    :: aircraft
-  type(scan_type),              intent(in)    :: scan
+  type(scan_type_idt),          intent(inout) :: scan
   integer,                      intent(in)    :: ibeam
+  integer,                      intent(in)    :: mslobe
   type(volume_type),            intent(inout) :: volume
   real(kind=RKIND),             intent(in)    :: grid_dx
   real(kind=RKIND),             intent(in)    :: theta1
@@ -1122,14 +1476,15 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
   integer :: igate
   integer :: verts
 
-  real(kind=RKIND), pointer, dimension(:,:) :: vx
-  real(kind=RKIND), pointer, dimension(:,:) :: vy
-  real(kind=RKIND), pointer, dimension(:,:) :: vz
+  ! Changed to a 3-D array to account for the main+side lobes (BWK, 05/06/26)
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vy
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vz
 
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_ul, vy_ul, vz_ul   ! Upper left corner of beam position
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_ur, vy_ur, vz_ur   ! Upper right corner of beam position
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_lr, vy_lr, vz_lr   ! Lower right corner of beam position
-  real(kind=RKIND), pointer, dimension(:,:) :: vx_ll, vy_ll, vz_ll   ! Lower left corner of beam position
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_ul, vy_ul, vz_ul   ! Upper left corner of beam position
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_ur, vy_ur, vz_ur   ! Upper right corner of beam position
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_lr, vy_lr, vz_lr   ! Lower right corner of beam position
+  real(kind=RKIND), pointer, dimension(:,:,:) :: vx_ll, vy_ll, vz_ll   ! Lower left corner of beam position
 
   real(kind=RKIND)    :: azimuth
   real(kind=RKIND)    :: elevation
@@ -1144,6 +1499,7 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
   real(kind=RKIND)    :: gate_z_meters
 
   !  For incorporation of variable beamwidth
+  ! Changed to a 2-D array to account for the main+side lobes (BWK, 05/06/26)
   real(kind=RKIND), dimension(4) :: azm_bw_tmp, elev_bw_tmp, x_bw, y_bw, z_bw
   real(kind=RKIND), dimension(4) :: gate_xind_bw, gate_yind_bw, gate_zmeters_bw
 
@@ -1154,8 +1510,8 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
   volume%roll      ( ibeam ) = aircraft%roll
   volume%pitch     ( ibeam ) = aircraft%pitch
   volume%drift     ( ibeam ) = aircraft%drift
-  volume%rotation  ( ibeam ) = scan%rotation(ibeam)
-  volume%tilt      ( ibeam ) = scan%tilt(ibeam)
+  volume%rotation  ( ibeam ) = scan%rotation(ibeam,1)
+  volume%tilt      ( ibeam ) = scan%tilt(ibeam,1)
   volume%eastward_velocity  ( ibeam ) = aircraft%dxdt
   volume%northward_velocity ( ibeam ) = aircraft%dydt
   volume%vertical_velocity  ( ibeam ) = aircraft%dzdt
@@ -1177,52 +1533,67 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
   !      &                           volume%heading(ibeam), volume%roll(ibeam), volume%pitch(ibeam), &
   !      &                           azimuth, elevation, x_unit_dist, y_unit_dist, z_unit_dist )
 
-  call coordinate_transformation ( trim(scan%primary_axis), volume%tilt(ibeam), volume%rotation(ibeam), &
+! Added elements to account for the lobe number from the scan type (BWK, 05/06/26)
+  call coordinate_transformation ( trim(scan%primary_axis), scan%tilt(ibeam,mslobe), scan%rotation(ibeam,mslobe), &
        &                           volume%heading(ibeam), volume%roll(ibeam), volume%pitch(ibeam), theta1, pref_ang, &
        &                           azimuth, elevation, x_unit_dist, y_unit_dist, z_unit_dist, bwidthuse_h, bwidthuse_v )
 
-  volume%azimuth         ( ibeam ) = azimuth
-  volume%elevation       ( ibeam ) = elevation
-  volume%georefs_applied ( ibeam ) = 1
+! Adding the azimuth and elevation main+Side lobe structure to the scan variable type
+     scan%azim(ibeam,mslobe) = azimuth
+     scan%elev(ibeam,mslobe) = elevation
+     scan%beamwidth_h(ibeam,mslobe) = bwidthuse_h
+     scan%beamwidth_v(ibeam,mslobe) = bwidthuse_v
+
+     ! Computing the SLL to use in the weighting scheme
+     !scan%sll(ibeam,mslobe) = 10**((scan%direct(ibeam,mslobe)-scan%direct(ibeam,1))/10)
+     scan%sll(ibeam,mslobe) = 10**((scan%direct(ibeam,mslobe)-scan%direct(ibeam,1))/scan%direct(ibeam,1))
+
+! Added the if statement since this is getting passed to the volume structure; doesn't change based on lobes (BWK, 05/06/26)
+  if (mslobe == 1) then
+     volume%azimuth         ( ibeam ) = azimuth
+     volume%elevation       ( ibeam ) = elevation
+     volume%georefs_applied ( ibeam ) = 1
+
 
   !
   ! Assign the beamwidth to the beam based on the sine of the elevation
   !
 
-  if (bw_type < 2) then
-      volume%beamwidth_h( ibeam ) = theta1 !+ sin(abs(azimuth * RAD_PER_DEG))   !!! This needs to be edited to account for the other panels, right now it assumes the side panels only
-      volume%beamwidth_v( ibeam ) = theta1 !+ sin(abs(elevation * RAD_PER_DEG))
-  elseif (bw_type == 2) then
-      !volume%beamwidth_h( ibeam ) = theta1 + sin(abs(azimuth * RAD_PER_DEG))   !!! This needs to be edited to account for the other panels, right now it assumes the side panels only
-      !volume%beamwidth_v( ibeam ) = theta1 + sin(abs(elevation * RAD_PER_DEG))
-      volume%beamwidth_h( ibeam ) = bwidthuse_h
-      volume%beamwidth_v( ibeam ) = bwidthuse_v
+    if (bw_type < 2) then
+        volume%beamwidth_h( ibeam ) = theta1 !+ sin(abs(azimuth * RAD_PER_DEG))   !!! This needs to be edited to account for the other panels, right now it assumes the side panels only
+        volume%beamwidth_v( ibeam ) = theta1 !+ sin(abs(elevation * RAD_PER_DEG))
+    elseif (bw_type == 2) then
+        !volume%beamwidth_h( ibeam ) = theta1 + sin(abs(azimuth * RAD_PER_DEG))   !!! This needs to be edited to account for the other panels, right now it assumes the side panels only
+        !volume%beamwidth_v( ibeam ) = theta1 + sin(abs(elevation * RAD_PER_DEG))
+        volume%beamwidth_h( ibeam ) = bwidthuse_h
+        volume%beamwidth_v( ibeam ) = bwidthuse_v
+    endif
   endif
 
-  vx   => volume%point_to_data("VX")
-  vy   => volume%point_to_data("VY")
-  vz   => volume%point_to_data("VZ")
+  vx   => volume%point_to_data_3D("VX")
+  vy   => volume%point_to_data_3D("VY")
+  vz   => volume%point_to_data_3D("VZ")
 
   if (bw_type > 0) then
      ! Upper left indices of beam
-     vx_ul => volume%point_to_data("VX_UL")
-     vy_ul => volume%point_to_data("VY_UL")
-     vz_ul => volume%point_to_data("VZ_UL")
+     vx_ul => volume%point_to_data_3D("VX_UL")
+     vy_ul => volume%point_to_data_3D("VY_UL")
+     vz_ul => volume%point_to_data_3D("VZ_UL")
 
      ! Upper right indices of beam
-     vx_ur => volume%point_to_data("VX_UR")
-     vy_ur => volume%point_to_data("VY_UR")
-     vz_ur => volume%point_to_data("VZ_UR")
+     vx_ur => volume%point_to_data_3D("VX_UR")
+     vy_ur => volume%point_to_data_3D("VY_UR")
+     vz_ur => volume%point_to_data_3D("VZ_UR")
 
      ! Lower right indices of beam
-     vx_lr => volume%point_to_data("VX_LR")
-     vy_lr => volume%point_to_data("VY_LR")
-     vz_lr => volume%point_to_data("VZ_LR")
+     vx_lr => volume%point_to_data_3D("VX_LR")
+     vy_lr => volume%point_to_data_3D("VY_LR")
+     vz_lr => volume%point_to_data_3D("VZ_LR")
 
      ! Lower left indices of beam
-     vx_ll => volume%point_to_data("VX_LL")
-     vy_ll => volume%point_to_data("VY_LL")
-     vz_ll => volume%point_to_data("VZ_LL")
+     vx_ll => volume%point_to_data_3D("VX_LL")
+     vy_ll => volume%point_to_data_3D("VY_LL")
+     vz_ll => volume%point_to_data_3D("VZ_LL")
   endif
 
 
@@ -1238,9 +1609,9 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
       gate_z_meters = aircraft%z     + ( z_unit_dist * gate_dist )
 
       volume%range(igate)    = gate_dist
-      vx(igate,ibeam) = gate_x_index
-      vy(igate,ibeam) = gate_y_index
-      vz(igate,ibeam) = gate_z_meters
+      vx(mslobe,igate,ibeam) = gate_x_index
+      vy(mslobe,igate,ibeam) = gate_y_index
+      vz(mslobe,igate,ibeam) = gate_z_meters
 
       if (bw_type > 0) then
 
@@ -1263,16 +1634,28 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
          ! Note: we may want this to be circular in the future, but for now, the beam is rectangular
          !
 
-         azm_bw_tmp(1) = (90-volume%azimuth(ibeam))-(volume%beamwidth_h(ibeam) / 2.0)
+         ! This is the original version that only accounts for the main beam
+         !azm_bw_tmp(1) = (90-volume%azimuth(ibeam))-(volume%beamwidth_h(ibeam) / 2.0)
+         !azm_bw_tmp(2) = azm_bw_tmp(1)
+         !azm_bw_tmp(3) = (90-volume%azimuth(ibeam))+(volume%beamwidth_h(ibeam) / 2.0)
+         !azm_bw_tmp(4) = azm_bw_tmp(3)
+
+         !elev_bw_tmp(1) = (volume%elevation(ibeam))-(volume%beamwidth_v(ibeam) / 2.0)
+         !elev_bw_tmp(2) = (volume%elevation(ibeam))+(volume%beamwidth_v(ibeam) / 2.0)
+         !elev_bw_tmp(3) = elev_bw_tmp(2)
+         !elev_bw_tmp(4) = elev_bw_tmp(1)
+
+         ! This is the updated version, accounting for the different sidelobe influence (BWK, 05/06/26)
+         azm_bw_tmp(1) = (90-azimuth)-(bwidthuse_h / 2.0)
          azm_bw_tmp(2) = azm_bw_tmp(1)
-         azm_bw_tmp(3) = (90-volume%azimuth(ibeam))+(volume%beamwidth_h(ibeam) / 2.0)
+         azm_bw_tmp(3) = (90-azimuth)+(bwidthuse_h / 2.0)
          azm_bw_tmp(4) = azm_bw_tmp(3)
 
-         elev_bw_tmp(1) = (volume%elevation(ibeam))-(volume%beamwidth_v(ibeam) / 2.0)
-         elev_bw_tmp(2) = (volume%elevation(ibeam))+(volume%beamwidth_v(ibeam) / 2.0)
+         elev_bw_tmp(1) = (elevation)-(bwidthuse_v / 2.0)
+         elev_bw_tmp(2) = (elevation)+(bwidthuse_v / 2.0)
          elev_bw_tmp(3) = elev_bw_tmp(2)
          elev_bw_tmp(4) = elev_bw_tmp(1)
-
+         ! End update (05/06/26)
 
          ! Let's loop over the bounds to get the x, y, z position in meters - this is relative to the radar
          BW_LOOP: do verts = 1, 4
@@ -1290,25 +1673,28 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
          ! Define the points of the vertices that make up the square around the gate
 
          ! Upper left
-         vx_ul(igate,ibeam) = gate_xind_bw(2)
-         vy_ul(igate,ibeam) = gate_yind_bw(2)
-         vz_ul(igate,ibeam) = gate_zmeters_bw(2)
+         ! Added the 'mslobe' dimension to account for the addition of sidelobes + main lobe; Original does not have
+         ! that loop dimension (BWK, 05/07/26)
+         vx_ul(mslobe,igate,ibeam) = gate_xind_bw(2)
+         vy_ul(mslobe,igate,ibeam) = gate_yind_bw(2)
+         vz_ul(mslobe,igate,ibeam) = gate_zmeters_bw(2)
 
          ! Upper right
-         vx_ur(igate,ibeam) = gate_xind_bw(3)
-         vy_ur(igate,ibeam) = gate_yind_bw(3)
-         vz_ur(igate,ibeam) = gate_zmeters_bw(3)
+         vx_ur(mslobe,igate,ibeam) = gate_xind_bw(3)
+         vy_ur(mslobe,igate,ibeam) = gate_yind_bw(3)
+         vz_ur(mslobe,igate,ibeam) = gate_zmeters_bw(3)
 
          ! Lower right
-         vx_lr(igate,ibeam) = gate_xind_bw(4)
-         vy_lr(igate,ibeam) = gate_yind_bw(4)
-         vz_lr(igate,ibeam) = gate_zmeters_bw(4)
+         vx_lr(mslobe,igate,ibeam) = gate_xind_bw(4)
+         vy_lr(mslobe,igate,ibeam) = gate_yind_bw(4)
+         vz_lr(mslobe,igate,ibeam) = gate_zmeters_bw(4)
 
          ! Lower left
-         vx_ll(igate,ibeam) = gate_xind_bw(1)
-         vy_ll(igate,ibeam) = gate_yind_bw(1)
-         vz_ll(igate,ibeam) = gate_zmeters_bw(1)
+         vx_ll(mslobe,igate,ibeam) = gate_xind_bw(1)
+         vy_ll(mslobe,igate,ibeam) = gate_yind_bw(1)
+         vz_ll(mslobe,igate,ibeam) = gate_zmeters_bw(1)
          ! End of additions by B. Klotz (11/30/2023)
+         ! End updates (BWK, 05/07/26)
       endif
 
   enddo GATE_LOOP
@@ -1342,7 +1728,7 @@ subroutine WeightFuncCRS(dxm,dym,dzm,rng,az,el,bwh,bwv,dru,wfr,wf,wgtu)
    use module_configuration, only : RKIND
    implicit none
 
-   real(kind=RKIND), intent(in)   :: dxm, dym, dzm, rng, az, el, bwh, bwv, dru, wfr, wf
+   real(kind=RKIND), intent(in)   :: dxm, dym, dzm, rng, az, el, bwh, bwv, dru, wfr, wf 
    real(kind=RKIND), intent(out)  :: wgtu
    real(kind=RKIND)               :: d_r, d_az, d_el, d_r2, d_az2, d_el2, fac, Wr, We, Wa
    real(kind=RKIND)               :: rad_out, azm_out, elev_out
@@ -1379,18 +1765,18 @@ subroutine WeightFuncCRS(dxm,dym,dzm,rng,az,el,bwh,bwv,dru,wfr,wf,wgtu)
   !  Radar range, azimuth, and elevation weighting function
   !
 
-  if ((abs(d_r)<=(dru+(0.25*dru))) .and. (abs(d_az)<=(bwh/2.0)+(0.25*bwh/2.0)) .and. (abs(d_el)<=(bwv/2.0)+(0.25*bwv/2.0))) then
+  !if ((abs(d_r)<=(dru+(0.25*dru))) .and. (abs(d_az)<=(bwh/2.0)+(0.25*bwh/2.0)) .and. (abs(d_el)<=(bwv/2.0)+(0.25*bwv/2.0))) then
       fac=d_r2/(dru*dru)
       Wr = exp(wfr*fac)
       fac=d_az2/(bwh*bwh)
       Wa = exp(wf*fac)
       fac=d_el2/(bwv*bwv) !by oue?
       We = exp(wf*fac)
-  else
-      Wr = 0.e0
-      Wa = 0.e0
-      We = 0.e0
-  endif
+  !else
+  !    Wr = 0.e0
+  !    Wa = 0.e0
+  !    We = 0.e0
+  !endif
 
   wgtu = Wr*Wa*We
 
@@ -1420,6 +1806,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   use module_access_wrf, only : options_type
   use module_access_wrf, only : waypoint_type
   use module_scanning,   only : scan_type
+  use module_scanning,   only : scan_type_idt
   use crsim_mod, only : conf_var
   use module_external_attitude, only : use_external_attitudes
   use module_external_attitude, only : attitude_file
@@ -1433,7 +1820,7 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
   logical,            intent(in)  :: iq
   integer,            intent(out) :: seedlen
   type(options_type), intent(out) :: opts
-  type(scan_type),    intent(out) :: scan
+  type(scan_type_idt),    intent(out) :: scan
   type(conf_var),     intent(out) :: conf ! CRSim config options
 
 
@@ -1789,9 +2176,11 @@ subroutine namelist_options ( namelist_file , iq , seedlen , opts , scan , conf 
 
   if (iq) then
       scan%skip_seconds_between_scans = 10.0 / 3.0
-      call scan%read_scanning_table_file(trim(scanning_table_iq), .TRUE.)
+      !call scan%read_scanning_table_file(trim(scanning_table_iq), .TRUE.)
+      call scan%read_scanning_table_file_idt(trim(scanning_table_iq), .TRUE.)
   else
-      call scan%read_scanning_table_file(trim(scanning_table), opts%herky_jerky)
+      !call scan%read_scanning_table_file(trim(scanning_table), opts%herky_jerky)
+      call scan%read_scanning_table_file_idt(trim(scanning_table), opts%herky_jerky)
   endif
 
 end subroutine namelist_options

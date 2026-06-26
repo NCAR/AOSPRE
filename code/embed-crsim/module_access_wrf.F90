@@ -36,6 +36,7 @@ module module_access_wrf
       logical :: time_evolution
       logical :: helicopter
       logical :: herky_jerky
+      character(len=1024) :: namelist_iq
   end type options_type
 
   type, public :: wrf_metadata_type
@@ -813,11 +814,15 @@ contains
     implicit none
     class(wrf_metadata_type), intent(in) :: self
     character(len=*), intent(in) :: varname
-    real(kind=RKIND), dimension(:,:), intent(in) :: x, y, z
+    !integer, intent(in)           :: nlobes                      ! Added this to make sure we are accounting for the correct number of lobes (BWK, 05/07/26)
+    !real(kind=RKIND), dimension(:,:), intent(in) :: x, y, z     ! Original 2-D ranked varibale type, only addresses main beam
+    real(kind=RKIND), dimension(:,:), intent(in) :: x, y, z      ! New 3-D ranked varibale type, addresses main+side lobes (05/07/26, BWK)
+    !real(kind=RKIND), dimension(:,:), intent(in) :: lwgt      ! This is the lobe weight array; [ILOBE,IRAY] (BWK, 05/07/26)
     real(kind=RKIND), dimension(:,:), intent(out) :: out_array
+    !real(kind=RKIND), dimension(:,:,:)            :: tmp_out_array   ! This is a temporary array of the lobes that will be combined to create the main out_array (BWK, 05/07/26) 
     real(kind=RKIND), allocatable, dimension(:,:,:) :: source_array, p, pb, t, qv
 
-    integer :: iray, igate, im, ip, jm, jp, km, kp, kidx
+    integer ::  iray, igate, im, ip, jm, jp, km, kp, kidx   ! Added ilobe to account for the possibility of side lobes (BWK, 05/07/26)
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims, zdimid, nzd, nlevs, xsz, ysz
     integer, dimension(4) :: dims
@@ -1077,34 +1082,40 @@ contains
 
     out_array = -9999.
 
-    do iray = 1, size(x,2)
-        do igate = 1, size(x,1)
-            if ( z(igate,iray) < -9998 ) cycle
+    do iray = 1, size(x,2)      ! Changed index to 3 instead of 2 to account for the additional lobe dimension (BWK, 05/07/26)
+        do igate = 1, size(x,1) ! Changed index to 2 instead of 1 to account for the additional lobe dimension (BWK, 05/07/26)
+    
+            !do ilobe = 1, nlobes         ! Added new loop for lobe dimension (BWK, 05/07/26)
+            
+               if ( z(igate,iray) < -9998 ) cycle
 
-            im = int ( x(igate,iray) + xoffs )
-            ip = im+1
-            if ( ip > self%ni ) cycle
+               im = int ( x(igate,iray) + xoffs )
+               ip = im+1
+               if ( ip > self%ni ) cycle
 
-            jm = int ( y(igate,iray) + yoffs )
-            jp = jm+1
+               jm = int ( y(igate,iray) + yoffs )
+               jp = jm+1
 
-            km = int ( z(igate,iray) + zoffs )
-            kp = km+1
+               km = int ( z(igate,iray) + zoffs )
+               kp = km+1
 
-            xb = ( x(igate,iray) + xoffs - im )
-            xa = 1.0-xb
+               xb = ( x(igate,iray) + xoffs - im )
+               xa = 1.0-xb
 
-            yb = ( y(igate,iray) + yoffs - jm )
-            ya = 1.0-yb
+               yb = ( y(igate,iray) + yoffs - jm )
+               ya = 1.0-yb
 
-            zb = ( z(igate,iray) + zoffs - km )
-            za = 1.0-zb
+               zb = ( z(igate,iray) + zoffs - km )
+               za = 1.0-zb
 
-            out_array(igate,iray) = xa*ya*za*source_array(im,jm,km) + xa*ya*zb*source_array(im,jm,kp) + &
+                out_array(igate,iray) = xa*ya*za*source_array(im,jm,km) + xa*ya*zb*source_array(im,jm,kp) + &
                  &                  xa*yb*za*source_array(im,jp,km) + xa*yb*zb*source_array(im,jp,kp) + &
                  &                  xb*ya*za*source_array(ip,jm,km) + xb*ya*zb*source_array(ip,jm,kp) + &
                  &                  xb*yb*za*source_array(ip,jp,km) + xb*yb*zb*source_array(ip,jp,kp)
 
+            !enddo
+
+            !out_array(igate,iray) = sum(tmp_out_array(:,igate,iray)) / nlobes
         enddo
     enddo
 
@@ -1483,28 +1494,30 @@ contains
 !!!!!! THESE ARE THE VARIABLE BEAMWIDTH VERSIONS OF THE INTERPOLATIONS ABOVE !!!!!!!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-  subroutine wrf_interp_varbw ( self, which, bwtype, volume, scan, grid_dx, varname, out_array )
+  subroutine wrf_interp_varbw ( self, which, bwtype, volume, scan, nlobe, grid_dx, varname, out_array )
     use netcdf, only : nf90_inq_varid
     use netcdf, only : nf90_get_var
     use netcdf, only : nf90_get_att
     use netcdf, only : nf90_inquire_variable
     use module_scanning,   only : scan_type
+    use module_scanning,   only : scan_type_idt
     use module_cfradial_output, only : volume_type
     !use module_llxy, only : PI
     implicit none
     class(wrf_metadata_type), intent(in) :: self
     character(len=1),             intent(in)    :: which
-    integer,                      intent(in)    :: bwtype
+    integer,                      intent(in)    :: bwtype, nlobe
     type(volume_type),            target        :: volume
-    type(scan_type),              intent(in)    :: scan
+    !type(scan_type),              intent(in)    :: scan
+    type(scan_type_idt),           intent(in)    :: scan
     character(len=*), intent(in) :: varname
     real(kind=RKIND), dimension(:,:), intent(out) :: out_array
     real(kind=RKIND), intent(in) :: grid_dx   ! model horizontal spacing
     !real(kind=RKIND), intent(in) :: ac_xgrid, ac_ygrid, ac_z, vol_range, vol_azm, vol_elev, vol_bw_h, vol_bw_v, scan_dr  ! information from the volume structure
-    real(kind=RKIND), dimension(:,:), pointer :: x, y, z    ! This is the index of the range gate
-    real(kind=RKIND), dimension(:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: x, y, z    ! This is the index of the range gate
+    real(kind=RKIND), dimension(:,:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
     real(kind=RKIND), allocatable, dimension(:,:,:) :: source_array, p, pb, t, qv
 
     integer :: iray, igate, im, ip, jm, jp, km, kp, kidx ! Added kidx to go with RHO_DS (BWK, 3/14/2022)
@@ -1512,6 +1525,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array, tmp_gate_array_cr, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND) :: xoffs, yoffs, zoffs
     character(len=8) :: stagger
@@ -1534,31 +1548,31 @@ contains
     real(kind=RKIND)       :: Wr,Wa,We
     real(kind=RKIND)       :: fac
 
-    x => volume%point_to_data("VX")
-    y => volume%point_to_data("VY")
-    x_ll => volume%point_to_data("VX_LL")
-    y_ll => volume%point_to_data("VY_LL")
-    x_lr => volume%point_to_data("VX_LR")
-    y_lr => volume%point_to_data("VY_LR")
-    x_ur => volume%point_to_data("VX_UR")
-    y_ur => volume%point_to_data("VY_UR")
-    x_ul => volume%point_to_data("VX_UL")
-    y_ul => volume%point_to_data("VY_UL")
+    x => volume%point_to_data_3D("VX")
+    y => volume%point_to_data_3D("VY")
+    x_ll => volume%point_to_data_3D("VX_LL")
+    y_ll => volume%point_to_data_3D("VY_LL")
+    x_lr => volume%point_to_data_3D("VX_LR")
+    y_lr => volume%point_to_data_3D("VY_LR")
+    x_ur => volume%point_to_data_3D("VX_UR")
+    y_ur => volume%point_to_data_3D("VY_UR")
+    x_ul => volume%point_to_data_3D("VX_UL")
+    y_ul => volume%point_to_data_3D("VY_UL")
     select case ( which )
     case default
         stop
     case ("A")
-        z => volume%point_to_data("ZINDXA")
-        z_ll => volume%point_to_data("ZINDXA_LL")
-        z_lr => volume%point_to_data("ZINDXA_LR")
-        z_ur => volume%point_to_data("ZINDXA_UR")
-        z_ul => volume%point_to_data("ZINDXA_UL")
+        z => volume%point_to_data_3D("ZINDXA")
+        z_ll => volume%point_to_data_3D("ZINDXA_LL")
+        z_lr => volume%point_to_data_3D("ZINDXA_LR")
+        z_ur => volume%point_to_data_3D("ZINDXA_UR")
+        z_ul => volume%point_to_data_3D("ZINDXA_UL")
     case ("B")
-        z => volume%point_to_data("ZINDXB")
-        z_ll => volume%point_to_data("ZINDXB_LL")
-        z_lr => volume%point_to_data("ZINDXB_LR")
-        z_ur => volume%point_to_data("ZINDXB_UR")
-        z_ul => volume%point_to_data("ZINDXB_UL")
+        z => volume%point_to_data_3D("ZINDXB")
+        z_ll => volume%point_to_data_3D("ZINDXB_LL")
+        z_lr => volume%point_to_data_3D("ZINDXB_LR")
+        z_ur => volume%point_to_data_3D("ZINDXB_UR")
+        z_ul => volume%point_to_data_3D("ZINDXB_UL")
     end select
 
 
@@ -1802,14 +1816,22 @@ contains
     ! radar range resolution - from CR-SIM PostProcessing (B. Klotz, 12/14/2023)
     dr2  = dr*dr
 
-    do iray = 1, size(x,2)
+    !print *, 'SIZE X = ', size(x)
+    !print *, 'NRAYS, NGATES = ', size(x,2), size(x,3)
+    do iray = 1, size(x,3)
 
         ! angular resolution in az, el (radians) - Added by B. Klotz from CR-SIM PostProcessing (12/14/2023)
-        daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
-        del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
+        !daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
+        !del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
-        do igate = 1, size(x,1)
-            if ( z(igate,iray) < -9998 ) cycle
+        ! This version accounts for the main+side lobe structures (BWK, 5/11/26)
+        daz2 = (scan%beamwidth_h(iray,nlobe))*(scan%beamwidth_h(iray,nlobe))
+        del2 = (scan%beamwidth_v(iray,nlobe))*(scan%beamwidth_v(iray,nlobe))
+
+        do igate = 1, size(x,2)
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(nlobe,igate,iray) < 1.) .or. (y(nlobe,igate,iray) < 1.) .or. (z(nlobe,igate,iray) < 1.)) cycle
+            !if ( z(nlobe,igate,iray) < -9998 ) cycle
 
             ! Creating new filter to account for the beamwidth (B. Klotz, 12/04/2023)
 
@@ -1824,18 +1846,37 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(nlobe,igate,iray),x_ur(nlobe,igate,iray),x_lr(nlobe,igate,iray),x_ll(nlobe,igate,iray)]
+            yv_arr = [y_ul(nlobe,igate,iray),y_ur(nlobe,igate,iray),y_lr(nlobe,igate,iray),y_ll(nlobe,igate,iray)]
+            zv_arr = [z_ul(nlobe,igate,iray),z_ur(nlobe,igate,iray),z_lr(nlobe,igate,iray),z_ll(nlobe,igate,iray)]
 
+            !print *, 'X, Y, Z = ', x(igate,iray), y(igate,iray), z(igate,iray)
+            !print *, 'X_UL, X_UR, X_LR, XLL = ',xv_arr
+            !print *, 'Y_UL, Y_UR, Y_LR, YLL = ',yv_arr
+            !print *, 'Z_UL, Z_UR, Z_LR, ZLL = ',zv_arr
+            
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            ! OLD METHOD !
+            ! Get the minimum and maximum indices in each direction
+            !maxx = MAX(x_ul(nlobe,igate,iray),x_ur(nlobe,igate,iray),x_lr(nlobe,igate,iray),x_ll(nlobe,igate,iray))
+            !maxy = MAX(y_ul(nlobe,igate,iray),y_ur(nlobe,igate,iray),y_lr(nlobe,igate,iray),y_ll(nlobe,igate,iray))
+            !maxz = MAX(z_ul(nlobe,igate,iray),z_ur(nlobe,igate,iray),z_lr(nlobe,igate,iray),z_ll(nlobe,igate,iray))
+
+            !minx = MIN(x_ul(nlobe,igate,iray),x_ur(nlobe,igate,iray),x_lr(nlobe,igate,iray),x_ll(nlobe,igate,iray))
+            !miny = MIN(y_ul(nlobe,igate,iray),y_ur(nlobe,igate,iray),y_lr(nlobe,igate,iray),y_ll(nlobe,igate,iray))
+            !minz = MIN(z_ul(nlobe,igate,iray),z_ur(nlobe,igate,iray),z_lr(nlobe,igate,iray),z_ll(nlobe,igate,iray))
+
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
@@ -1878,13 +1919,13 @@ contains
 
                 tmp_dx_meters  = (im - volume%aircraft_xgrid(iray)) * grid_dx
 
-                xb = ABS( (x(igate,iray) + xoffs) - im) / (dx)
+                xb = ABS( (x(nlobe,igate,iray) + xoffs) - im) / (dx)
                 xa = 1.0 - xb
 
                 DY_LOOP : do dyl = 1, dy+1
 
                     if (dyl .eq. 1) then
-                        !jm = int (y(igate,iray) + yoffs)
+                        !jm = int (y(nlobe,igate,iray) + yoffs)
                         jm = int (miny + yoffs)
                     endif
        
@@ -1895,13 +1936,13 @@ contains
 
                     tmp_dy_meters  = (jm - volume%aircraft_ygrid(iray)) * grid_dx
 
-                    yb = ABS( (y(igate,iray) + yoffs) - jm) / (dy)
+                    yb = ABS( (y(nlobe,igate,iray) + yoffs) - jm) / (dy)
                     ya = 1.0 - yb
 
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            km = int (z(nlobe,igate,iray) + zoffs)
                         endif
                    
 
@@ -1913,8 +1954,14 @@ contains
                         tmp_dz_meters = (self%zf(im,jm,km)) - volume%aircraft_z(iray) ! Added by B. Klotz (12/14/2023)
                         ! print *, "im, jm, km, dx_m, dy_m, dz_m",im,jm,km,tmp_dx_meters,tmp_dy_meters,tmp_dz_meters
 
-                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
-                             & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+                        ! Original call 
+                        !call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
+                        !     & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+
+                    
+                        ! Updated version using correct beamwidth references (BWK, 5/11/26)
+                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),scan%azim(iray,nlobe), &
+                             & scan%elev(iray,nlobe),scan%beamwidth_h(iray,nlobe),scan%beamwidth_v(iray,nlobe),dr,wfacr,wfac,wgt_use_cr)
                         
                    ! Getting the location of the grid point relative to the aircraft in spherical coordiantes
                    ! Added by B. Klotz (12/14/2023)
@@ -1959,20 +2006,21 @@ contains
                   !endif
 !
                   !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
-                        zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
+                        zb = ABS( (z(nlobe,igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
 
                         ! Get the aircraft relative x,y,z position
 
+                        ! Added SLL as a percent through DZ Loop (BWK, 5/12/26)
                         wgt_use1 = xa*ya*za
-                        wgt_tot1 = wgt_tot1+wgt_use1
+                        wgt_tot1 = wgt_tot1+(wgt_use1*scan%sll(iray,nlobe))
 
-                        wgt_tot_cr = wgt_tot_cr+wgt_use_cr
+                        wgt_tot_cr = wgt_tot_cr+(wgt_use_cr*scan%sll(iray,nlobe))
 
-                        tmp_gate_array = tmp_gate_array + (wgt_use1*source_array(im,jm,km))
-                        tmp_gate_array_cr = tmp_gate_array_cr + (wgt_use_cr*source_array(im,jm,km))
+                        tmp_gate_array = tmp_gate_array + (wgt_use1*source_array(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr = tmp_gate_array_cr + (wgt_use_cr*source_array(im,jm,km)*scan%sll(iray,nlobe))
                         !print *, "im, jm, km, xa, ya, za", im, jm, km, xa, ya, za, wgt_tot
                         !print *, "Wr, We, Wa, Wtot, Wfacr", Wr, We, Wa, wgt_tot, wfacr
                   
@@ -1989,7 +2037,7 @@ contains
             ! This is a similar procedure to the CR-SIM post-processing code
             if (wgt_tot_cr > 0) then
                 out_array(igate,iray) = tmp_gate_array_cr/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_array(igate,iray) = tmp_gate_array/wgt_tot1
             else
                 out_array(igate,iray) = -9999.
@@ -2003,21 +2051,23 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine wrf_Ku_varbw ( self, which, bwtype, volume, scan, grid_dx, out_Ku, out_u )
+  subroutine wrf_Ku_varbw ( self, which, bwtype, volume, scan, nlobe, grid_dx, out_Ku, out_u )
     use module_scanning,   only : scan_type
+    use module_scanning,   only : scan_type_idt
     use module_cfradial_output, only : volume_type
     implicit none
     class(wrf_metadata_type),     intent(in)    :: self
     character(len=1),             intent(in)    :: which ! "A" or "B"
-    integer,                      intent(in)    :: bwtype
+    integer,                      intent(in)    :: bwtype, nlobe
     type(volume_type), target                        :: volume
-    type(scan_type),              intent(in)    :: scan
+    !type(scan_type),              intent(in)    :: scan
+    type(scan_type_idt),              intent(in)    :: scan
     real(kind=RKIND), intent(in) :: grid_dx   ! model horizontal spacing
 
-    real(kind=RKIND), pointer, dimension(:,:) :: x, y, z    ! This is the index of the range gate
-    real(kind=RKIND), pointer, dimension(:,:) :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
-    real(kind=RKIND), pointer, dimension(:,:) :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
-    real(kind=RKIND), pointer, dimension(:,:) :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
+    real(kind=RKIND), pointer, dimension(:,:,:) :: x, y, z    ! This is the index of the range gate
+    real(kind=RKIND), pointer, dimension(:,:,:) :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
+    real(kind=RKIND), pointer, dimension(:,:,:) :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
+    real(kind=RKIND), pointer, dimension(:,:,:) :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
 
     real(kind=RKIND), dimension(:,:), intent(out) :: out_Ku
     real(kind=RKIND), dimension(:,:), intent(out) :: out_u
@@ -2035,6 +2085,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array_u, tmp_gate_array_Ku,tmp_gate_array_cr_u, tmp_gate_array_cr_Ku, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+     real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND)      :: xoffs, yoffs, zoffs
     character(len=8)      :: stagger
@@ -2051,36 +2102,36 @@ contains
     real(kind=RKIND)       :: Wr,Wa,We
     real(kind=RKIND)       :: fac
 
-    x => volume%point_to_data("VX")
-    y => volume%point_to_data("VY")
+    x => volume%point_to_data_3D("VX")
+    y => volume%point_to_data_3D("VY")
     if (bwtype > 0) then
-        x_ll => volume%point_to_data("VX_LL")
-        y_ll => volume%point_to_data("VY_LL")
-        x_lr => volume%point_to_data("VX_LR")
-        y_lr => volume%point_to_data("VY_LR")
-        x_ur => volume%point_to_data("VX_UR")
-        y_ur => volume%point_to_data("VY_UR")
-        x_ul => volume%point_to_data("VX_UL")
-        y_ul => volume%point_to_data("VY_UL")
+        x_ll => volume%point_to_data_3D("VX_LL")
+        y_ll => volume%point_to_data_3D("VY_LL")
+        x_lr => volume%point_to_data_3D("VX_LR")
+        y_lr => volume%point_to_data_3D("VY_LR")
+        x_ur => volume%point_to_data_3D("VX_UR")
+        y_ur => volume%point_to_data_3D("VY_UR")
+        x_ul => volume%point_to_data_3D("VX_UL")
+        y_ul => volume%point_to_data_3D("VY_UL")
     endif
     select case ( which )
     case default
         stop
     case ("A")
-        z => volume%point_to_data("ZINDXA")
+        z => volume%point_to_data_3D("ZINDXA")
         if (bwtype > 0) then
-            z_ll => volume%point_to_data("ZINDXA_LL")
-            z_lr => volume%point_to_data("ZINDXA_LR")
-            z_ur => volume%point_to_data("ZINDXA_UR")
-            z_ul => volume%point_to_data("ZINDXA_UL")
+            z_ll => volume%point_to_data_3D("ZINDXA_LL")
+            z_lr => volume%point_to_data_3D("ZINDXA_LR")
+            z_ur => volume%point_to_data_3D("ZINDXA_UR")
+            z_ul => volume%point_to_data_3D("ZINDXA_UL")
         endif
     case ("B")
-        z => volume%point_to_data("ZINDXB")
+        z => volume%point_to_data_3D("ZINDXB")
         if (bwtype > 0) then
-            z_ll => volume%point_to_data("ZINDXB_LL")
-            z_lr => volume%point_to_data("ZINDXB_LR")
-            z_ur => volume%point_to_data("ZINDXB_UR")
-            z_ul => volume%point_to_data("ZINDXB_UL")
+            z_ll => volume%point_to_data_3D("ZINDXB_LL")
+            z_lr => volume%point_to_data_3D("ZINDXB_LR")
+            z_ur => volume%point_to_data_3D("ZINDXB_UR")
+            z_ul => volume%point_to_data_3D("ZINDXB_UL")
         endif
     end select
 
@@ -2102,13 +2153,20 @@ contains
 ! radar range resolution - from CR-SIM PostProcessing (B. Klotz, 12/14/2023)
     dr2  = dr*dr
 
-    do iray = 1, size(x,2)
+    do iray = 1, size(x,3)
 
 ! angular resolution in az, el (radians) - Added by B. Klotz from CR-SIM PostProcessing (12/14/2023)
-        daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
-        del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
+        !daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
+        !del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
-        do igate = 1, size(x,1)
+! angular resolution in az, el (radians) - Updated by B. Klotz for main+side lobe processing (5/11/2026)
+        daz2 = (scan%beamwidth_h(iray,nlobe))*(scan%beamwidth_h(iray,nlobe))
+        del2 = (scan%beamwidth_v(iray,nlobe))*(scan%beamwidth_v(iray,nlobe))
+
+        do igate = 1, size(x,2)
+
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(nlobe,igate,iray) < 1.) .or. (y(nlobe,igate,iray) < 1.) .or. (z(nlobe,igate,iray) < 1.)) cycle
 
 ! Creating new filter to account for the beamwidth (B. Klotz, 12/04/2023)
 
@@ -2125,18 +2183,22 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(nlobe,igate,iray),x_ur(nlobe,igate,iray),x_lr(nlobe,igate,iray),x_ll(nlobe,igate,iray)]
+            yv_arr = [y_ul(nlobe,igate,iray),y_ur(nlobe,igate,iray),y_lr(nlobe,igate,iray),y_ll(nlobe,igate,iray)]
+            zv_arr = [z_ul(nlobe,igate,iray),z_ur(nlobe,igate,iray),z_lr(nlobe,igate,iray),z_ll(nlobe,igate,iray)]
 
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
@@ -2150,7 +2212,7 @@ contains
             DX_LOOP : do dxl = 1, dx+1
 
                 if (dxl .eq. 1) then
-                    !im = int (x(igate,iray) + xoffs)
+                    !im = int (x(nlobe,igate,iray) + xoffs)
                     im = int (minx + xoffs)
                 endif
 
@@ -2161,13 +2223,13 @@ contains
 
                 tmp_dx_meters  = (im - volume%aircraft_xgrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
 
-                xb = ABS( (x(igate,iray) + xoffs) - im) / (dx)
+                xb = ABS( (x(nlobe,igate,iray) + xoffs) - im) / (dx)
                 xa = 1.0 - xb
 
                 DY_LOOP : do dyl = 1, dy+1
 
                     if (dyl .eq. 1) then
-                        !jm = int (y(igate,iray) + yoffs)
+                        !jm = int (y(nlobe,igate,iray) + yoffs)
                         jm = int (miny + yoffs)
                     endif
 
@@ -2178,13 +2240,14 @@ contains
 
                     tmp_dy_meters  = (jm - volume%aircraft_ygrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
 
-                    yb = ABS( (y(igate,iray) + yoffs) - jm) / (dy)
+                    yb = ABS( (y(nlobe,igate,iray) + yoffs) - jm) / (dy)
                     ya = 1.0 - yb
 
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(nlobe,igate,iray) + zoffs)
+                             km = int (minz + zoffs)
                         endif
          
 
@@ -2196,29 +2259,35 @@ contains
                         tmp_dz_meters = (self%zf(im,jm,km)) - volume%aircraft_z(iray) ! Added by B. Klotz (12/14/2023)
                         ! print *, "im, jm, km, dx_m, dy_m, dz_m",im,jm,km,tmp_dx_meters,tmp_dy_meters,tmp_dz_meters
 
-                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
-                             & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+                        ! Original version
+                        !call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
+                        !     & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+
+                        ! Updated to account for main+side lobe structure from scan file (BWK, 5/11/26)
+                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),scan%azim(iray,nlobe), &
+                             & scan%elev(iray,nlobe),scan%beamwidth_h(iray,nlobe),scan%beamwidth_v(iray,nlobe),dr,wfacr,wfac,wgt_use_cr)
 !
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
-                        zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
+                        zb = ABS( (z(nlobe,igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
 
                         ! Get the aircraft relative x,y,z position
 
+                        ! Adding SLL as a percent through DZ Loop end (BWK, 5/12/26)
                         wgt_use1 = xa*ya*za
-                        wgt_tot1 = wgt_tot1+wgt_use1
+                        wgt_tot1 = wgt_tot1+(wgt_use1*scan%sll(iray,nlobe))
 
-                        wgt_tot_cr = wgt_tot_cr+wgt_use_cr
+                        wgt_tot_cr = wgt_tot_cr+(wgt_use_cr*scan%sll(iray,nlobe))
 
-                        dummm = self%u(im,jm,km)-self%u(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
+                        dummm = self%u(im,jm,km)-self%u(int(x(nlobe,igate,iray)),int(y(nlobe,igate,iray)),int(z(nlobe,igate,iray)))
 
-                        tmp_gate_array_Ku = tmp_gate_array_Ku + (wgt_use1*dummm)
-                        tmp_gate_array_cr_Ku = tmp_gate_array_cr_Ku + (wgt_use_cr*dummm)
+                        tmp_gate_array_Ku = tmp_gate_array_Ku + (wgt_use1*dummm*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_Ku = tmp_gate_array_cr_Ku + (wgt_use_cr*dummm*scan%sll(iray,nlobe))
 
-                        tmp_gate_array_u = tmp_gate_array_u + (wgt_use1*self%u(im,jm,km))
-                        tmp_gate_array_cr_u = tmp_gate_array_cr_u + (wgt_use_cr*self%u(im,jm,km))
+                        tmp_gate_array_u = tmp_gate_array_u + (wgt_use1*self%u(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_u = tmp_gate_array_cr_u + (wgt_use_cr*self%u(im,jm,km)*scan%sll(iray,nlobe))
 
                         km = km+1
                     enddo DZ_LOOP
@@ -2233,7 +2302,7 @@ contains
             if (wgt_tot_cr > 0) then
                 out_Ku(igate,iray) = (tmp_gate_array_cr_Ku * self%rdx)/wgt_tot_cr
                 out_u(igate,iray)  = (tmp_gate_array_cr_u)/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_Ku(igate,iray) = (tmp_gate_array_Ku * self%rdx)/wgt_tot1
                 out_u(igate,iray)  = (tmp_gate_array_u)/wgt_tot1
             else
@@ -2248,20 +2317,22 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine wrf_Kv_varbw ( self, which, bwtype, volume, scan, grid_dx, out_Kv, out_v )
+  subroutine wrf_Kv_varbw ( self, which, bwtype, volume, scan, nlobe, grid_dx, out_Kv, out_v )
     use module_scanning,   only : scan_type
+    use module_scanning,   only : scan_type_idt
     use module_cfradial_output, only : volume_type
     implicit none
     class(wrf_metadata_type), intent(in) :: self
     character(len=1),             intent(in)    :: which
-    integer,                      intent(in)    :: bwtype
+    integer,                      intent(in)    :: bwtype, nlobe
     type(volume_type),            target        :: volume
-    type(scan_type),              intent(in)    :: scan
+    !type(scan_type),              intent(in)    :: scan
+    type(scan_type_idt),              intent(in)    :: scan
     real(kind=RKIND), intent(in) :: grid_dx   ! model horizontal spacing
-    real(kind=RKIND), dimension(:,:), pointer :: x, y, z    ! This is the index of the range gate
-    real(kind=RKIND), dimension(:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: x, y, z    ! This is the index of the range gate
+    real(kind=RKIND), dimension(:,:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
 
     real(kind=RKIND), dimension(:,:), intent(out) :: out_Kv
     real(kind=RKIND), dimension(:,:), intent(out) :: out_v
@@ -2274,6 +2345,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array_v, tmp_gate_array_Kv, tmp_gate_array_cr_v, tmp_gate_array_cr_Kv, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND)      :: xoffs, yoffs, zoffs
     character(len=8)      :: stagger
@@ -2290,31 +2362,31 @@ contains
     real(kind=RKIND)       :: Wr,Wa,We
     real(kind=RKIND)       :: fac
 
-    x => volume%point_to_data("VX")
-    y => volume%point_to_data("VY")
-    x_ll => volume%point_to_data("VX_LL")
-    y_ll => volume%point_to_data("VY_LL")
-    x_lr => volume%point_to_data("VX_LR")
-    y_lr => volume%point_to_data("VY_LR")
-    x_ur => volume%point_to_data("VX_UR")
-    y_ur => volume%point_to_data("VY_UR")
-    x_ul => volume%point_to_data("VX_UL")
-    y_ul => volume%point_to_data("VY_UL")
+    x => volume%point_to_data_3D("VX")
+    y => volume%point_to_data_3D("VY")
+    x_ll => volume%point_to_data_3D("VX_LL")
+    y_ll => volume%point_to_data_3D("VY_LL")
+    x_lr => volume%point_to_data_3D("VX_LR")
+    y_lr => volume%point_to_data_3D("VY_LR")
+    x_ur => volume%point_to_data_3D("VX_UR")
+    y_ur => volume%point_to_data_3D("VY_UR")
+    x_ul => volume%point_to_data_3D("VX_UL")
+    y_ul => volume%point_to_data_3D("VY_UL")
     select case ( which )
     case default
         stop
     case ("A")
-        z => volume%point_to_data("ZINDXA")
-        z_ll => volume%point_to_data("ZINDXA_LL")
-        z_lr => volume%point_to_data("ZINDXA_LR")
-        z_ur => volume%point_to_data("ZINDXA_UR")
-        z_ul => volume%point_to_data("ZINDXA_UL")
+        z => volume%point_to_data_3D("ZINDXA")
+        z_ll => volume%point_to_data_3D("ZINDXA_LL")
+        z_lr => volume%point_to_data_3D("ZINDXA_LR")
+        z_ur => volume%point_to_data_3D("ZINDXA_UR")
+        z_ul => volume%point_to_data_3D("ZINDXA_UL")
     case ("B")
-        z => volume%point_to_data("ZINDXB")
-        z_ll => volume%point_to_data("ZINDXB_LL")
-        z_lr => volume%point_to_data("ZINDXB_LR")
-        z_ur => volume%point_to_data("ZINDXB_UR")
-        z_ul => volume%point_to_data("ZINDXB_UL")
+        z => volume%point_to_data_3D("ZINDXB")
+        z_ll => volume%point_to_data_3D("ZINDXB_LL")
+        z_lr => volume%point_to_data_3D("ZINDXB_LR")
+        z_ur => volume%point_to_data_3D("ZINDXB_UR")
+        z_ul => volume%point_to_data_3D("ZINDXB_UL")
     end select
 
 
@@ -2334,13 +2406,18 @@ contains
     ! radar range resolution - from CR-SIM PostProcessing
     dr2  = dr*dr
 
-    do iray = 1, size(x,2)
+    do iray = 1, size(x,3)
 
         ! angular resolution in az, el (radians) - from CR-SIM PostProcessing
-        daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
-        del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
+        !daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
+        !del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
-        do igate = 1, size(x,1)
+        ! angular resolution in az, el (radians) - from CR-SIM PostProcessing - Updated for main+side lobe processing (BWK, 5/11/26)
+        daz2 = (scan%beamwidth_h(iray,nlobe))*(scan%beamwidth_h(iray,nlobe))
+        del2 = (scan%beamwidth_v(iray,nlobe))*(scan%beamwidth_v(iray,nlobe))
+
+        do igate = 1, size(x,2)
+            if ((x(nlobe,igate,iray) < 1.) .or. (y(nlobe,igate,iray) < 1.) .or. (z(nlobe,igate,iray) < 1.)) cycle
 
             ! Creating new filter to account for the beamwidth
 
@@ -2357,17 +2434,22 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(nlobe,igate,iray),x_ur(nlobe,igate,iray),x_lr(nlobe,igate,iray),x_ll(nlobe,igate,iray)]
+            yv_arr = [y_ul(nlobe,igate,iray),y_ur(nlobe,igate,iray),y_lr(nlobe,igate,iray),y_ll(nlobe,igate,iray)]
+            zv_arr = [z_ul(nlobe,igate,iray),z_ur(nlobe,igate,iray),z_lr(nlobe,igate,iray),z_ll(nlobe,igate,iray)]
+
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
@@ -2381,7 +2463,7 @@ contains
             DX_LOOP : do dxl = 1, dx+1
 
                 if (dxl .eq. 1) then
-                    !im = int (x(igate,iray) + xoffs)
+                    !im = int (x(nlobe,igate,iray) + xoffs)
                     im = int (minx + xoffs)
                 endif
 
@@ -2392,13 +2474,13 @@ contains
 
                 tmp_dx_meters  = (im - volume%aircraft_xgrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
 
-                xb = ABS( (x(igate,iray) + xoffs) - im) / (dx)
+                xb = ABS( (x(nlobe,igate,iray) + xoffs) - im) / (dx)
                 xa = 1.0 - xb
 
                 DY_LOOP : do dyl = 1, dy+1
 
                     if (dyl .eq. 1) then
-                        !jm = int (y(igate,iray) + yoffs)
+                        !jm = int (y(nlobe,igate,iray) + yoffs)
                         jm = int (miny + yoffs)
                     endif
 
@@ -2409,13 +2491,14 @@ contains
 
                     tmp_dy_meters  = (jm - volume%aircraft_ygrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
 
-                    yb = ABS( (y(igate,iray) + yoffs) - jm) / (dy)
+                    yb = ABS( (y(nlobe,igate,iray) + yoffs) - jm) / (dy)
                     ya = 1.0 - yb
 
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(nlobe,igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
 
                         if (km < 1 .or. km > self%nk) then
@@ -2425,29 +2508,35 @@ contains
 
                         tmp_dz_meters = (self%zf(im,jm,km)) - volume%aircraft_z(iray) ! Added by B. Klotz (12/14/2023)
 
-                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
-                             & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+                        ! Old version
+                        !call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
+                        !     & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+
+                        ! Updated version - for main+side lobe processing (BWK, 5/11/26)
+                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),scan%azim(iray,nlobe), &
+                             & scan%elev(iray,nlobe),scan%beamwidth_h(iray,nlobe),scan%beamwidth_v(iray,nlobe),dr,wfacr,wfac,wgt_use_cr)
 
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
-                        zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
+                        zb = ABS( (z(nlobe,igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
 
                         ! Get the aircraft relative x,y,z position
 
+                        ! Adding SLL as percentage through end of DZ Loop (BWK, 5/12/26)
                         wgt_use1 = xa*ya*za
-                        wgt_tot1 = wgt_tot1+wgt_use1
+                        wgt_tot1 = wgt_tot1+(wgt_use1*scan%sll(iray,nlobe))
 
-                        wgt_tot_cr = wgt_tot_cr+wgt_use_cr
+                        wgt_tot_cr = wgt_tot_cr+(wgt_use_cr*scan%sll(iray,nlobe))
 
-                        dummm = self%v(im,jm,km)-self%v(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
+                        dummm = self%v(im,jm,km)-self%v(int(x(nlobe,igate,iray)),int(y(nlobe,igate,iray)),int(z(nlobe,igate,iray)))
 
-                        tmp_gate_array_Kv = tmp_gate_array_Kv + (wgt_use1*dummm)
-                        tmp_gate_array_cr_Kv = tmp_gate_array_cr_Kv + (wgt_use_cr*dummm)
+                        tmp_gate_array_Kv = tmp_gate_array_Kv + (wgt_use1*dummm*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_Kv = tmp_gate_array_cr_Kv + (wgt_use_cr*dummm*scan%sll(iray,nlobe))
 
-                        tmp_gate_array_v = tmp_gate_array_v + (wgt_use1*self%v(im,jm,km))
-                        tmp_gate_array_cr_v = tmp_gate_array_cr_v + (wgt_use_cr*self%v(im,jm,km))
+                        tmp_gate_array_v = tmp_gate_array_v + (wgt_use1*self%v(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_v = tmp_gate_array_cr_v + (wgt_use_cr*self%v(im,jm,km)*scan%sll(iray,nlobe))
 
                         km = km+1
                     enddo DZ_LOOP
@@ -2462,7 +2551,7 @@ contains
             if (wgt_tot_cr > 0) then
                 out_Kv(igate,iray) = (tmp_gate_array_cr_Kv * self%rdy)/wgt_tot_cr
                 out_v(igate,iray)  = (tmp_gate_array_cr_v)/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_Kv(igate,iray) = (tmp_gate_array_Kv * self%rdy)/wgt_tot1
                 out_v(igate,iray)  = (tmp_gate_array_v)/wgt_tot1
             else
@@ -2477,20 +2566,22 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine wrf_Kw_varbw ( self, which, bwtype, volume, scan, grid_dx, out_Kw, out_w, out_HT )
+  subroutine wrf_Kw_varbw ( self, which, bwtype, volume, scan, nlobe, grid_dx, out_Kw, out_w, out_HT )
     use module_scanning,   only : scan_type
+    use module_scanning,   only : scan_type_idt
     use module_cfradial_output, only : volume_type
     implicit none
     class(wrf_metadata_type), intent(in) :: self
     character(len=1),             intent(in)    :: which
-    integer,                      intent(in)    :: bwtype
+    integer,                      intent(in)    :: bwtype, nlobe
     type(volume_type),            target        :: volume
-    type(scan_type),              intent(in)    :: scan
+    !type(scan_type),              intent(in)    :: scan
+    type(scan_type_idt),              intent(in)    :: scan
     real(kind=RKIND), intent(in) :: grid_dx   ! model horizontal spacing
-    real(kind=RKIND), dimension(:,:), pointer :: x, y, z    ! This is the index of the range gate
-    real(kind=RKIND), dimension(:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: x, y, z    ! This is the index of the range gate
+    real(kind=RKIND), dimension(:,:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
 
     real(kind=RKIND), dimension(:,:), intent(out) :: out_Kw
     real(kind=RKIND), dimension(:,:), intent(out) :: out_w
@@ -2504,6 +2595,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array_w, tmp_gate_array_Kw, tmp_gate_array_cr_w, tmp_gate_array_cr_Kw, tmp_gate_array_HT, tmp_gate_array_cr_HT, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND)      :: xoffs, yoffs, zoffs
     character(len=8)      :: stagger
@@ -2520,31 +2612,31 @@ contains
     real(kind=RKIND)       :: Wr,Wa,We
     real(kind=RKIND)       :: fac
 
-    x => volume%point_to_data("VX")
-    y => volume%point_to_data("VY")
-    x_ll => volume%point_to_data("VX_LL")
-    y_ll => volume%point_to_data("VY_LL")
-    x_lr => volume%point_to_data("VX_LR")
-    y_lr => volume%point_to_data("VY_LR")
-    x_ur => volume%point_to_data("VX_UR")
-    y_ur => volume%point_to_data("VY_UR")
-    x_ul => volume%point_to_data("VX_UL")
-    y_ul => volume%point_to_data("VY_UL")
+    x => volume%point_to_data_3D("VX")
+    y => volume%point_to_data_3D("VY")
+    x_ll => volume%point_to_data_3D("VX_LL")
+    y_ll => volume%point_to_data_3D("VY_LL")
+    x_lr => volume%point_to_data_3D("VX_LR")
+    y_lr => volume%point_to_data_3D("VY_LR")
+    x_ur => volume%point_to_data_3D("VX_UR")
+    y_ur => volume%point_to_data_3D("VY_UR")
+    x_ul => volume%point_to_data_3D("VX_UL")
+    y_ul => volume%point_to_data_3D("VY_UL")
     select case ( which )
     case default
         stop
     case ("A")
-        z => volume%point_to_data("ZINDXA")
-        z_ll => volume%point_to_data("ZINDXA_LL")
-        z_lr => volume%point_to_data("ZINDXA_LR")
-        z_ur => volume%point_to_data("ZINDXA_UR")
-        z_ul => volume%point_to_data("ZINDXA_UL")
+        z => volume%point_to_data_3D("ZINDXA")
+        z_ll => volume%point_to_data_3D("ZINDXA_LL")
+        z_lr => volume%point_to_data_3D("ZINDXA_LR")
+        z_ur => volume%point_to_data_3D("ZINDXA_UR")
+        z_ul => volume%point_to_data_3D("ZINDXA_UL")
     case ("B")
-        z => volume%point_to_data("ZINDXB")
-        z_ll => volume%point_to_data("ZINDXB_LL")
-        z_lr => volume%point_to_data("ZINDXB_LR")
-        z_ur => volume%point_to_data("ZINDXB_UR")
-        z_ul => volume%point_to_data("ZINDXB_UL")
+        z => volume%point_to_data_3D("ZINDXB")
+        z_ll => volume%point_to_data_3D("ZINDXB_LL")
+        z_lr => volume%point_to_data_3D("ZINDXB_LR")
+        z_ur => volume%point_to_data_3D("ZINDXB_UR")
+        z_ul => volume%point_to_data_3D("ZINDXB_UL")
     end select
 
     dr = scan%meters_between_gates
@@ -2565,20 +2657,28 @@ contains
     ! radar range resolution - from CR-SIM PostProcessing (B. Klotz, 12/14/2023)
     dr2  = dr*dr
 
-    do iray = 1, size(x,2)
+    do iray = 1, size(x,3)
 
         ! angular resolution in az, el (radians) - Added by B. Klotz from CR-SIM PostProcessing (12/14/2023)
-        daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
-        del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
+        !daz2 = (volume%beamwidth_h(iray))*(volume%beamwidth_h(iray))
+        !del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
-        do igate = 1, size(x,1)
+        ! angular resolution in az, el (radians) - Updated for main+side lobe structure processing (BWK, 5/11/26)
+        daz2 = (scan%beamwidth_h(iray,nlobe))*(scan%beamwidth_h(iray,nlobe))
+        del2 = (scan%beamwidth_v(iray,nlobe))*(scan%beamwidth_v(iray,nlobe))
+
+        do igate = 1, size(x,2)
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(nlobe,igate,iray) < 1.) .or. (y(nlobe,igate,iray) < 1.) .or. (z(nlobe,igate,iray) < 1.)) cycle
 
             ! Creating new filter to account for the beamwidth (B. Klotz, 12/04/2023)
 
             tmp_gate_array_w     = 0.0
             tmp_gate_array_Kw    = 0.0
+            tmp_gate_array_HT    = 0.0
             tmp_gate_array_cr_w  = 0.0
             tmp_gate_array_cr_Kw = 0.0
+            tmp_gate_array_cr_HT = 0.0
 
             ! This is the standard version as previously done - really only used if no points found with
             ! the alternative method described in the CR-SIM postprocessing tool
@@ -2588,17 +2688,22 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+             ! Print the vertex points (indices)
+            xv_arr = [x_ul(nlobe,igate,iray),x_ur(nlobe,igate,iray),x_lr(nlobe,igate,iray),x_ll(nlobe,igate,iray)]
+            yv_arr = [y_ul(nlobe,igate,iray),y_ur(nlobe,igate,iray),y_lr(nlobe,igate,iray),y_ll(nlobe,igate,iray)]
+            zv_arr = [z_ul(nlobe,igate,iray),z_ur(nlobe,igate,iray),z_lr(nlobe,igate,iray),z_ll(nlobe,igate,iray)]
+
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
@@ -2612,7 +2717,7 @@ contains
             DX_LOOP : do dxl = 1, dx+1
 
                 if (dxl .eq. 1) then
-                    !im = int (x(igate,iray) + xoffs)
+                    !im = int (x(nlobe,igate,iray) + xoffs)
                     im = int (minx + xoffs)
                 endif
 
@@ -2623,13 +2728,13 @@ contains
 
                 tmp_dx_meters  = (im - volume%aircraft_xgrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
 
-                xb = ABS( (x(igate,iray) + xoffs) - im) / (dx)
+                xb = ABS( (x(nlobe,igate,iray) + xoffs) - im) / (dx)
                 xa = 1.0 - xb
 
                 DY_LOOP : do dyl = 1, dy+1
 
                     if (dyl .eq. 1) then
-                        !jm = int (y(igate,iray) + yoffs)
+                        !jm = int (y(nlobe,igate,iray) + yoffs)
                         jm = int (miny + yoffs)
                     endif
 
@@ -2640,13 +2745,14 @@ contains
 
                     tmp_dy_meters  = (jm - volume%aircraft_ygrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
 
-                    yb = ABS( (y(igate,iray) + yoffs) - jm) / (dy)
+                    yb = ABS( (y(nlobe,igate,iray) + yoffs) - jm) / (dy)
                     ya = 1.0 - yb
 
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(nlobe,igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
 
 
@@ -2656,35 +2762,50 @@ contains
                         endif
 
                         tmp_dz_meters = (self%zf(im,jm,km)) - volume%aircraft_z(iray) ! Added by B. Klotz (12/14/2023)
+                        ! Old version
+                        !call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
+                        !     & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
 
-                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
-                             & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+                        ! Updated version - accounting for main + side lobe processing structure (BWK, 5/11/26)
+                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),scan%azim(iray,nlobe), &
+                             & scan%elev(iray,nlobe),scan%beamwidth_h(iray,nlobe),scan%beamwidth_v(iray,nlobe),dr,wfacr,wfac,wgt_use_cr)
 
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
-                        zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
+                        zb = ABS( (z(nlobe,igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
 
                         ! Get the aircraft relative x,y,z position
 
+                        ! Adding in the SLL as relative percent through the end of the DZ Loop (BWK, 5/12/26)
                         wgt_use1 = xa*ya*za
-                        wgt_tot1 = wgt_tot1+wgt_use1
+                        wgt_tot1 = wgt_tot1+(wgt_use1*scan%sll(iray,nlobe))
 
-                        wgt_tot_cr = wgt_tot_cr+wgt_use_cr
+                        wgt_tot_cr = wgt_tot_cr+(wgt_use_cr*scan%sll(iray,nlobe))
 
-                        zfdif = self%zf(im,jm,km)-self%zf(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
+                        zfdif = self%zf(im,jm,km)-self%zf(int(x(nlobe,igate,iray)),int(y(nlobe,igate,iray)),int(z(nlobe,igate,iray)))
                         !print *,'zfdif:  ',zfdif
-                        if (zfdif <= 0.0) zfdif = 1.0
-                        !dummm = (self%w(im,jm,km)-self%w(x(igate,iray),y(igate,iray),z(igate,iray))) / (self%zf(im,jm,km)-self%zf(x(igate,iray),y(igate,iray),z(igate,iray)))
-                        tmp_gate_array_Kw = tmp_gate_array_Kw + (wgt_use1*dummm)
-                        tmp_gate_array_cr_Kw = tmp_gate_array_cr_Kw + (wgt_use_cr*dummm)
+                        if (zfdif >= 0. .and. zfdif <= 1.) then
+                            !print *, 'Igate, iray, zfdif = ',igate,iray,zfdif
+                            zfdif = 10.0
+                        endif
+                        if (zfdif < 0. .and. zfdif >= -1.) then
+                            !print *, 'Igate, iray, zfdif = ',igate,iray,zfdif
+                            zfdif = -10.0
+                        endif
+                        dummm = (self%w(im,jm,km)-self%w(int(x(nlobe,igate,iray)),int(y(nlobe,igate,iray)),int(z(nlobe,igate,iray)))) / zfdif
+                        !tmp_gate_array_Kw = tmp_gate_array_Kw + (wgt_use1*zfdif*scan%sll(iray,nlobe))
+                        !tmp_gate_array_cr_Kw = tmp_gate_array_cr_Kw + (wgt_use_cr*zfdif*scan%sll(iray,nlobe))
 
-                        tmp_gate_array_w = tmp_gate_array_w + (wgt_use1*self%w(im,jm,km))
-                        tmp_gate_array_cr_w = tmp_gate_array_cr_w + (wgt_use_cr*self%w(im,jm,km))
+                        tmp_gate_array_Kw = tmp_gate_array_Kw + (wgt_use1*dummm*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_Kw = tmp_gate_array_cr_Kw + (wgt_use_cr*dummm*scan%sll(iray,nlobe))
 
-                        tmp_gate_array_HT = tmp_gate_array_HT + (wgt_use1*self%zf(im,jm,km))
-                        tmp_gate_array_cr_HT = tmp_gate_array_cr_HT + (wgt_use_cr*self%zf(im,jm,km))
+                        tmp_gate_array_w = tmp_gate_array_w + (wgt_use1*self%w(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_w = tmp_gate_array_cr_w + (wgt_use_cr*self%w(im,jm,km)*scan%sll(iray,nlobe))
+
+                        tmp_gate_array_HT = tmp_gate_array_HT + (wgt_use1*self%zf(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_HT = tmp_gate_array_cr_HT + (wgt_use_cr*self%zf(im,jm,km)*scan%sll(iray,nlobe))
                         km = km+1
                     enddo DZ_LOOP
 
@@ -2699,7 +2820,7 @@ contains
                 out_Kw(igate,iray) = (tmp_gate_array_cr_Kw)/wgt_tot_cr
                 out_w(igate,iray)  = (tmp_gate_array_cr_w)/wgt_tot_cr
                 out_HT(igate,iray)  = (tmp_gate_array_cr_HT)/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_Kw(igate,iray) = (tmp_gate_array_Kw)/wgt_tot1
                 out_w(igate,iray)  = (tmp_gate_array_w)/wgt_tot1
                 out_HT(igate,iray)  = (tmp_gate_array_HT)/wgt_tot1
@@ -2717,24 +2838,26 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine wrf_RHO_d_varbw ( self, which, bwtype, volume, scan, grid_dx, out_RHO_d, out_T, out_RHO_ds)
+  subroutine wrf_RHO_d_varbw ( self, which, bwtype, volume, scan, nlobe, grid_dx, out_RHO_d, out_T, out_RHO_ds)
     use netcdf, only : nf90_inq_varid
     use netcdf, only : nf90_get_var
     use netcdf, only : nf90_get_att
     use netcdf, only : nf90_inquire_variable
     use module_scanning,   only : scan_type
+    use module_scanning,   only : scan_type_idt
     use module_cfradial_output, only : volume_type
     implicit none
     class(wrf_metadata_type), intent(in) :: self
     character(len=1),             intent(in)    :: which
-    integer,                      intent(in)    :: bwtype
+    integer,                      intent(in)    :: bwtype, nlobe
     type(volume_type),            target        :: volume
-    type(scan_type),              intent(in)    :: scan
+    !type(scan_type),              intent(in)    :: scan
+    type(scan_type_idt),              intent(in)    :: scan
     real(kind=RKIND), intent(in) :: grid_dx   ! model horizontal spacing
-    real(kind=RKIND), dimension(:,:), pointer :: x, y, z    ! This is the index of the range gate
-    real(kind=RKIND), dimension(:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
-    real(kind=RKIND), dimension(:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: x, y, z    ! This is the index of the range gate
+    real(kind=RKIND), dimension(:,:,:), pointer :: x_ll, x_lr, x_ur, x_ul    ! New x-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: y_ll, y_lr, y_ur, y_ul    ! New y-index variables associated with the beamwidth
+    real(kind=RKIND), dimension(:,:,:), pointer :: z_ll, z_lr, z_ur, z_ul    ! New z-index variables associated with the beamwidth
     real(kind=RKIND), dimension(:,:), intent(out) :: out_RHO_d, out_RHO_ds, out_T
     real(kind=RKIND), allocatable, dimension(:,:,:) :: RHO_D_grid, tgrid, qv, RHO_DS_grid ! Added RHO_DS (BWK, 3/14/2022)
 
@@ -2745,6 +2868,7 @@ contains
     real(kind=RKIND)    :: wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND) :: xoffs, yoffs, zoffs
     character(len=8) :: stagger
@@ -2766,31 +2890,31 @@ contains
     real(kind=RKIND)       :: Wr,Wa,We
     real(kind=RKIND)       :: fac
 
-    x => volume%point_to_data("VX")
-    y => volume%point_to_data("VY")
-    x_ll => volume%point_to_data("VX_LL")
-    y_ll => volume%point_to_data("VY_LL")
-    x_lr => volume%point_to_data("VX_LR")
-    y_lr => volume%point_to_data("VY_LR")
-    x_ur => volume%point_to_data("VX_UR")
-    y_ur => volume%point_to_data("VY_UR")
-    x_ul => volume%point_to_data("VX_UL")
-    y_ul => volume%point_to_data("VY_UL")
+    x => volume%point_to_data_3D("VX")
+    y => volume%point_to_data_3D("VY")
+    x_ll => volume%point_to_data_3D("VX_LL")
+    y_ll => volume%point_to_data_3D("VY_LL")
+    x_lr => volume%point_to_data_3D("VX_LR")
+    y_lr => volume%point_to_data_3D("VY_LR")
+    x_ur => volume%point_to_data_3D("VX_UR")
+    y_ur => volume%point_to_data_3D("VY_UR")
+    x_ul => volume%point_to_data_3D("VX_UL")
+    y_ul => volume%point_to_data_3D("VY_UL")
     select case ( which )
     case default
         stop
     case ("A")
-        z => volume%point_to_data("ZINDXA")
-        z_ll => volume%point_to_data("ZINDXA_LL")
-        z_lr => volume%point_to_data("ZINDXA_LR")
-        z_ur => volume%point_to_data("ZINDXA_UR")
-        z_ul => volume%point_to_data("ZINDXA_UL")
+        z => volume%point_to_data_3D("ZINDXA")
+        z_ll => volume%point_to_data_3D("ZINDXA_LL")
+        z_lr => volume%point_to_data_3D("ZINDXA_LR")
+        z_ur => volume%point_to_data_3D("ZINDXA_UR")
+        z_ul => volume%point_to_data_3D("ZINDXA_UL")
     case ("B")
-        z => volume%point_to_data("ZINDXB")
-        z_ll => volume%point_to_data("ZINDXB_LL")
-        z_lr => volume%point_to_data("ZINDXB_LR")
-        z_ur => volume%point_to_data("ZINDXB_UR")
-        z_ul => volume%point_to_data("ZINDXB_UL")
+        z => volume%point_to_data_3D("ZINDXB")
+        z_ll => volume%point_to_data_3D("ZINDXB_LL")
+        z_lr => volume%point_to_data_3D("ZINDXB_LR")
+        z_ur => volume%point_to_data_3D("ZINDXB_UR")
+        z_ul => volume%point_to_data_3D("ZINDXB_UL")
     end select
 
     !
@@ -2846,9 +2970,10 @@ contains
     wfac=-2.e0*log(2.e0)
     wfacr=pi2/wfac
 
-    do iray = 1, size(x,2)
-        do igate = 1, size(x,1)
-            if ( z(igate,iray) < -9998 ) cycle
+    do iray = 1, size(x,3)
+        do igate = 1, size(x,2)
+            if ((x(nlobe,igate,iray) < 1.) .or. (y(nlobe,igate,iray) < 1.) .or. (z(nlobe,igate,iray) < 1.)) cycle
+            !if ( z(nlobe,igate,iray) < -9998 ) cycle
 
             tmp_gate_array_rho_d = 0.0
             tmp_gate_array_t = 0.0
@@ -2862,17 +2987,22 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+             ! Print the vertex points (indices)
+            xv_arr = [x_ul(nlobe,igate,iray),x_ur(nlobe,igate,iray),x_lr(nlobe,igate,iray),x_ll(nlobe,igate,iray)]
+            yv_arr = [y_ul(nlobe,igate,iray),y_ur(nlobe,igate,iray),y_lr(nlobe,igate,iray),y_ll(nlobe,igate,iray)]
+            zv_arr = [z_ul(nlobe,igate,iray),z_ur(nlobe,igate,iray),z_lr(nlobe,igate,iray),z_ll(nlobe,igate,iray)]
+
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) ) + 3
@@ -2890,7 +3020,7 @@ contains
             DX_LOOP : do dxl = 1, dx+1
 
                 if (dxl .eq. 1) then
-                    !im = int (x(igate,iray) + xoffs)
+                    !im = int (x(nlobe,igate,iray) + xoffs)
                     im = int (minx + xoffs)
                 endif
 
@@ -2899,7 +3029,7 @@ contains
                     cycle
                 endif
 
-                xb = ABS( (x(igate,iray) + xoffs) - im) / (dx)
+                xb = ABS( (x(nlobe,igate,iray) + xoffs) - im) / (dx)
                 xa = 1.0 - xb
 
                 tmp_dx_meters  = (im - volume%aircraft_xgrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
@@ -2916,7 +3046,7 @@ contains
                         cycle
                     endif
 
-                    yb = ABS( (y(igate,iray) + yoffs) - jm) / (dy)
+                    yb = ABS( (y(nlobe,igate,iray) + yoffs) - jm) / (dy)
                     ya = 1.0 - yb
 
                     tmp_dy_meters  = (jm - volume%aircraft_ygrid(iray)) * grid_dx ! Added by B. Klotz (12/14/2023)
@@ -2924,7 +3054,8 @@ contains
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(nlobe,igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
          
 
@@ -2935,29 +3066,35 @@ contains
 
                         tmp_dz_meters = (self%zf(im,jm,km)) - volume%aircraft_z(iray) ! Added by B. Klotz (12/14/2023)
                         ! print *, "im, jm, km, dx_m, dy_m, dz_m",im,jm,km,tmp_dx_meters,tmp_dy_meters,tmp_dz_meters
+                        ! Old version
+                        !call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
+                        !     & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
 
-                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),volume%azimuth(iray), &
-                             & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
+                        ! Updated version - using the main + side lobe processing structure (BWK, 5/11/26)
+                        call WeightFuncCRS(tmp_dx_meters,tmp_dy_meters,tmp_dz_meters,volume%range(igate),scan%azim(iray,nlobe), &
+                             & scan%elev(iray,nlobe),scan%beamwidth_h(iray,nlobe),scan%beamwidth_v(iray,nlobe), &
+                             dr,wfacr,wfac,wgt_use_cr)
         
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
-                        zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
+                        zb = ABS( (z(nlobe,igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
 
                         ! Get the aircraft relative x,y,z position
 
+                        ! Added the SLL value as a relative percent through end of DZ Loop (BWK, 5/12/26)
                         wgt_use1 = xa*ya*za
-                        wgt_tot1 = wgt_tot1+wgt_use1
+                        wgt_tot1 = wgt_tot1+(wgt_use1*scan%sll(iray,nlobe))
 
-                        wgt_tot_cr = wgt_tot_cr+wgt_use_cr
+                        wgt_tot_cr = wgt_tot_cr+(wgt_use_cr*scan%sll(iray,nlobe))
 
-                        tmp_gate_array_rho_d = tmp_gate_array_rho_d + (wgt_use1*RHO_D_grid(im,jm,km))
-                        tmp_gate_array_cr_rho_d = tmp_gate_array_cr_rho_d + (wgt_use_cr*RHO_D_grid(im,jm,km))
-                        tmp_gate_array_rho_ds = tmp_gate_array_rho_ds + (wgt_use1*RHO_DS_grid(im,jm,km))
-                        tmp_gate_array_cr_rho_ds = tmp_gate_array_cr_rho_ds + (wgt_use_cr*RHO_DS_grid(im,jm,km))
-                        tmp_gate_array_t = tmp_gate_array_t + (wgt_use1*tgrid(im,jm,km))
-                        tmp_gate_array_cr_t = tmp_gate_array_cr_t + (wgt_use_cr*tgrid(im,jm,km))
+                        tmp_gate_array_rho_d = tmp_gate_array_rho_d + (wgt_use1*RHO_D_grid(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_rho_d = tmp_gate_array_cr_rho_d + (wgt_use_cr*RHO_D_grid(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_rho_ds = tmp_gate_array_rho_ds + (wgt_use1*RHO_DS_grid(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_rho_ds = tmp_gate_array_cr_rho_ds + (wgt_use_cr*RHO_DS_grid(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_t = tmp_gate_array_t + (wgt_use1*tgrid(im,jm,km)*scan%sll(iray,nlobe))
+                        tmp_gate_array_cr_t = tmp_gate_array_cr_t + (wgt_use_cr*tgrid(im,jm,km)*scan%sll(iray,nlobe))
                         !print *, "im, jm, km, xa, ya, za", im, jm, km, xa, ya, za, wgt_tot
                         !print *, "Wr, We, Wa, Wtot, Wfacr", Wr, We, Wa, wgt_tot, wfacr
 
@@ -2975,7 +3112,7 @@ contains
                 out_RHO_d(igate,iray)  = tmp_gate_array_cr_rho_d/wgt_tot_cr
                 out_RHO_ds(igate,iray) = tmp_gate_array_cr_rho_ds/wgt_tot_cr
                 out_T(igate,iray)      = tmp_gate_array_cr_t/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_RHO_d(igate,iray)  = tmp_gate_array_rho_d/wgt_tot1
                 out_RHO_ds(igate,iray) = tmp_gate_array_rho_ds/wgt_tot1
                 out_T(igate,iray)      = tmp_gate_array_t/wgt_tot1

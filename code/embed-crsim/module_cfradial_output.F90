@@ -6,6 +6,7 @@ module module_cfradial_output
 
   integer, parameter :: MAX_RAYS = 85000 ! 40000 ! 85000
   integer, parameter :: MAX_NGATES = 2500
+  integer, parameter :: MAX_NLOBES = 9                ! Added as part of the IDT update (BWK, 05/08/26)
   integer, parameter, public :: MAX_SWEEPS = 230 ! 15 ! 230
 
   type config_output_type
@@ -100,11 +101,24 @@ module module_cfradial_output
       type(volume_field_type), pointer :: next => NULL()
   end type volume_field_type
 
+! Added this for 3-D arrays accounting for main + side lobe structure (BWK, 05/07/26)
+  type, public :: volume_field_type_3D
+      character(len=256) :: field_name
+      character(len=256) :: field_description
+      character(len=256) :: field_units
+      character(len=8) :: source
+      integer :: varid
+      real(kind=RKIND), allocatable, dimension(:,:,:) :: data
+      type(volume_field_type_3D), pointer :: next => NULL()
+  end type volume_field_type_3D
+
   type, public :: volume_type
       type(volume_field_type) :: root
+      type(volume_field_type_3D) :: root3D
       integer :: number
       integer :: nrays
       integer :: ngates
+      integer :: nlobes    ! Added to account for main + sidelobe structure (BWK, 05/07/2026)
       integer :: sweep
 
       real(kind=RKIND)               :: fold_limit_lower
@@ -181,7 +195,9 @@ module module_cfradial_output
       procedure :: initialize_new_field => volume_initialize_new_field
       procedure :: point_to => volume_point_to
       procedure :: point_to_data => volume_point_to_data
+      procedure :: point_to_data_3D => volume_point_to_data_3D
       procedure :: new_array => volume_new_array
+      procedure :: new_array_3D => volume_new_array_3D
       procedure :: next_point => volume_next_point
       procedure :: final => volume_destruct
       procedure :: radial_velocity
@@ -286,7 +302,7 @@ contains
   subroutine cfradial_open ( self, &
        &                     flnm, namelist_file, &
        &                     meters_between_gates, meters_to_center_of_first_gate, &
-       &                     nrays, max_gates, sweep, time_coverage_start, &
+       &                     nrays, max_gates, nlobes, sweep, time_coverage_start, &
        &                     fold_limit_lower, fold_limit_upper )
     use netcdf, only : NF90_CLOBBER
     use netcdf, only : NF90_64BIT_OFFSET
@@ -312,6 +328,7 @@ contains
     real(kind=RKIND),                  intent(in) :: meters_to_center_of_first_gate
     integer,               intent(in) :: nrays
     integer,               intent(in) :: max_gates
+    integer,               intent(in) :: nlobes
     integer,               intent(in) :: sweep
     character(len=19),     intent(in) :: time_coverage_start
     real(kind=RKIND),                  intent(in) :: fold_limit_lower
@@ -319,6 +336,7 @@ contains
     integer :: ierr
     integer :: time_dimid
     integer :: range_dimid
+    integer :: lobe_dimid
     ! integer :: n_points_dimid
     integer :: sweep_dimid
     integer :: string_length_32_dimid
@@ -434,6 +452,9 @@ contains
 
     ierr = nf90_def_dim ( self%ncid, "range", max_gates, range_dimid )
     call error_handler(ierr, "Problem defining dimension 'range'")
+
+    ierr = nf90_def_dim ( self%ncid, "lobes", nlobes, lobe_dimid )
+    call error_handler(ierr, "Problem defining dimension 'lobe'")
 
     !
     ! "The n_points dimension indicates the total number of gates
@@ -1496,7 +1517,7 @@ contains
     endif
 
     if (config_x%output) then
-        ierr = nf90_def_var ( self%ncid, "x", NF90_FLOAT, dimids=(/range_dimid,time_dimid/), varid=config_x%varid, &
+        ierr = nf90_def_var ( self%ncid, "x", NF90_FLOAT, dimids=(/lobe_dimid,range_dimid,time_dimid/), varid=config_x%varid, &
              &                deflate_level=2, shuffle=.true. )
         ierr = nf90_put_att ( self%ncid, config_x%varid, "standard_name", "x")
         ierr = nf90_put_att ( self%ncid, config_x%varid, "long_name", "x")
@@ -1506,7 +1527,7 @@ contains
     endif
 
     if (config_y%output) then
-        ierr = nf90_def_var ( self%ncid, "y", NF90_FLOAT, dimids=(/range_dimid,time_dimid/), varid=config_y%varid, &
+        ierr = nf90_def_var ( self%ncid, "y", NF90_FLOAT, dimids=(/lobe_dimid,range_dimid,time_dimid/), varid=config_y%varid, &
              &                deflate_level=2, shuffle=.true. )
         ierr = nf90_put_att ( self%ncid, config_y%varid, "standard_name", "y")
         ierr = nf90_put_att ( self%ncid, config_y%varid, "long_name", "y")
@@ -1516,7 +1537,7 @@ contains
     endif
 
     if (config_z%output) then
-        ierr = nf90_def_var ( self%ncid, "z", NF90_FLOAT, dimids=(/range_dimid,time_dimid/), varid=config_z%varid, &
+        ierr = nf90_def_var ( self%ncid, "z", NF90_FLOAT, dimids=(/lobe_dimid,range_dimid,time_dimid/), varid=config_z%varid, &
              &                deflate_level=2, shuffle=.true. )
         ierr = nf90_put_att ( self%ncid, config_z%varid, "standard_name", "z")
         ierr = nf90_put_att ( self%ncid, config_z%varid, "long_name", "z")
@@ -1644,6 +1665,8 @@ contains
     integer :: ierr
     type(volume_field_type), pointer :: ptr
     real(kind=RKIND), pointer, dimension(:,:) :: arr
+    type(volume_field_type_3D), pointer :: ptr3D ! added to account for change in main+side lobe structure (BWK, 5/12/26)
+    real(kind=RKIND), pointer, dimension(:,:,:) :: arr3D ! added to account for change in main+side lobe structure (BWK, 5/12/26)
 
     integer :: k
     real(kind=RKIND) :: rotang
@@ -1963,25 +1986,30 @@ contains
     ierr = nf90_put_var ( self%ncid, self%radar_beam_width_v_varid, volume%beamwidth_v )
     call error_handler(ierr, "Problem put radar_beam_width_v" )
 
+    ! Added '3D' tags to these variables because the pointers are stored as 3D variables
+    ! THey are in the dimension of lobes, gates, rays; We will only associate with the first lobe dimension (main lobe)
+    ! (BWK, 5/12/26)
     if (config_x%output) then
-        arr => volume%point_to_data("VX")
-        ierr = nf90_put_var(self%ncid, config_x%varid, arr(1:volume%ngates,1:volume%nrays))
+        arr3D => volume%point_to_data_3D("VX")
+        print *, 'SIZE VX = ', SIZE(arr3D)
+        print *, 'NLOBES = ', volume%nlobes
+        ierr = nf90_put_var(self%ncid, config_x%varid, arr3D(1:volume%nlobes,1:volume%ngates,1:volume%nrays))
         call error_handler(ierr, "Problem put x")
-        nullify(arr)
+        nullify(arr3D)
     endif
 
     if (config_y%output) then
-        arr => volume%point_to_data("VY")
-        ierr = nf90_put_var(self%ncid, config_y%varid, arr(1:volume%ngates,1:volume%nrays))
+        arr3D => volume%point_to_data_3D("VY")
+        ierr = nf90_put_var(self%ncid, config_y%varid, arr3D(1:volume%nlobes,1:volume%ngates,1:volume%nrays))
         call error_handler(ierr, "Problem put y")
-        nullify(arr)
+        nullify(arr3D)
     endif
 
     if (config_z%output) then
-        arr => volume%point_to_data("VZ")
-        ierr = nf90_put_var(self%ncid, config_z%varid, arr(1:volume%ngates,1:volume%nrays))
+        arr3D => volume%point_to_data_3D("VZ")
+        ierr = nf90_put_var(self%ncid, config_z%varid, arr3D(1:volume%nlobes,1:volume%ngates,1:volume%nrays))
         call error_handler(ierr, "Problem put z")
-        nullify(arr)
+        nullify(arr3D)
     endif
 
     if (config_vel%output) then
@@ -2667,6 +2695,34 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
+  function volume_point_to_data_3D(self, name) result (data)
+    !
+    ! PURPOSE:
+    !
+    !       Return a pointer to the %data array from the entry of the 
+    !       requested name in the <volume_field_type> linked list.
+    !
+    implicit none
+    class(volume_type), target, intent(inout) :: self
+    character(len=*), intent(in) :: name
+    real(kind=RKIND), dimension(:,:,:), pointer :: data
+    type(volume_field_type_3D), pointer :: ptr
+    ptr => self%root3D
+    do while ( associated ( ptr%next ) ) 
+        ptr => ptr%next
+        if ( trim(ptr%field_name) == name ) then
+            data => ptr%data
+            return
+        endif
+    enddo
+
+    write(*,'("MODULE_CFRADIAL_OUTPUT:VOLUME_POINT_TO_DATA_3D:  Field ", A, " not found.")') trim(name)
+    stop
+  end function volume_point_to_data_3D  
+
+!---------------------------------------------------------------------------------------------
+!---------------------------------------------------------------------------------------------
+
   function volume_new_array(self, name) result (data)
     !
     ! PURPOSE:
@@ -2690,8 +2746,11 @@ contains
     do while ( associated ( ptr%next ) ) 
         ptr => ptr%next
         if ( trim(ptr%field_name) == name ) then
-            write(*,'("field ''",A,"'' already exists....  Stop.")') trim(name)
-            stop
+            !write(*,'("field ''",A,"'' already exists....  Stop.")') trim(name)
+            !stop
+
+            write(*,'("Warning: field ''",A,"'' already exists....  Continue but check results.")') trim(name)
+            continue
         endif
     enddo
 
@@ -2713,6 +2772,61 @@ contains
     data => ptr%data
 
   end function volume_new_array
+
+!---------------------------------------------------------------------------------------------
+!---------------------------------------------------------------------------------------------
+
+!---------------------------------------------------------------------------------------------
+!---------------------------------------------------------------------------------------------
+
+  function volume_new_array_3D(self, name) result (data)
+    !
+    ! PURPOSE:
+    !
+    !      Create a new 3-D entry in our <volume_field_type_3D> linked list,
+    !      allocating the %data array for the entry, but not initializing 
+    !      values in the array.  Returns a pointer to the %data array.
+    !
+    !      This was created on 05/07/26 by B. Klotz to support the addition of main+side lobes
+    !
+    implicit none
+    class(volume_type), target, intent(inout) :: self
+    character(len=*), intent(in) :: name
+    real(kind=RKIND), dimension(:,:,:), pointer :: data       ! This now accounts for additional nlobe dimension (BWK, 05/07/26) 
+    type(volume_field_type_3D), pointer :: ptr
+
+    ! 
+    !  Scoot to the end of our linked list, checking to make sure that
+    !  we don't already have an entry of the requested name already defined.
+    !
+
+    ptr => self%root3D
+    do while ( associated ( ptr%next ) ) 
+        ptr => ptr%next
+        if ( trim(ptr%field_name) == name ) then
+            write(*,'("field ''",A,"'' already exists....  Stop.")') trim(name)
+            stop
+        endif
+    enddo
+
+    !
+    !  We're at the end of our linked list.  Add a new entry to the end.
+    !
+
+    allocate(ptr%next)
+    ptr => ptr%next
+    ptr%field_name = name
+    ptr%source = "COMPUTE"
+
+    !
+    !  Allocate the %data portion of the entry, and return a pointer
+    !  to that %data array.
+    !
+
+    allocate ( ptr%data ( self%nlobes, self%ngates , self%nrays ) )
+    data => ptr%data
+
+  end function volume_new_array_3D
 
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
@@ -2850,9 +2964,9 @@ contains
     real(kind=RKIND), pointer, dimension(:,:) :: uptr   ! Pointer to the  "U"     field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: vptr   ! Pointer to the  "V"     field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: wptr   ! Pointer to the  "W"     field in the <volume_field_type> linked list
-    real(kind=RKIND), pointer, dimension(:,:) :: vx     ! Pointer to the "VX"     field in the <volume_field_type> linked list
-    real(kind=RKIND), pointer, dimension(:,:) :: vy     ! Pointer to the "VY"     field in the <volume_field_type> linked list
-    real(kind=RKIND), pointer, dimension(:,:) :: vz     ! Pointer to the "VZ"     field in the <volume_field_type> linked list
+    real(kind=RKIND), pointer, dimension(:,:,:) :: vx     ! Pointer to the "VX"     field in the <volume_field_type> linked list
+    real(kind=RKIND), pointer, dimension(:,:,:) :: vy     ! Pointer to the "VY"     field in the <volume_field_type> linked list
+    real(kind=RKIND), pointer, dimension(:,:,:) :: vz     ! Pointer to the "VZ"     field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: velunf ! Pointer to the "VELUNF" field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: veltru ! Pointer to the "VELTRU" field in the <volume_field_type> linked list
 
@@ -2880,9 +2994,9 @@ contains
     uptr => self%point_to_data("U")
     vptr => self%point_to_data("V")
     wptr => self%point_to_data("W")
-    vx   => self%point_to_data("VX")
-    vy   => self%point_to_data("VY")
-    vz   => self%point_to_data("VZ")
+    vx   => self%point_to_data_3D("VX")
+    vy   => self%point_to_data_3D("VY")
+    vz   => self%point_to_data_3D("VZ")
 
     velunf => self%new_array("VELUNF")
     velunf = -9999 ! Default (i.e., no-data) value which will get overwritten below if we have the data.
@@ -2914,9 +3028,9 @@ contains
 
             ! Compute gate location (relative to aircraft) as an offset from the aircraft in meters.
             r = self%range(igate)
-            x = grid_dx * ( vx(igate,iray) - self%aircraft_xgrid(iray))
-            y = grid_dx * ( vy(igate,iray) - self%aircraft_ygrid(iray))
-            z =             vz(igate,iray) - self%aircraft_z(iray)
+            x = grid_dx * ( vx(1,igate,iray) - self%aircraft_xgrid(iray))
+            y = grid_dx * ( vy(1,igate,iray) - self%aircraft_ygrid(iray))
+            z =             vz(1,igate,iray) - self%aircraft_z(iray)
             vt = 0.0 ! Until we start considering this.
 
             velunf(igate,iray) = &
@@ -3031,9 +3145,9 @@ contains
     real(kind=RKIND), pointer, dimension(:,:) :: uptr   ! Pointer to the  "U"     field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: vptr   ! Pointer to the  "V"     field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: wptr   ! Pointer to the  "W"     field in the <volume_field_type> linked list
-    real(kind=RKIND), pointer, dimension(:,:) :: vx     ! Pointer to the "VX"     field in the <volume_field_type> linked list
-    real(kind=RKIND), pointer, dimension(:,:) :: vy     ! Pointer to the "VY"     field in the <volume_field_type> linked list
-    real(kind=RKIND), pointer, dimension(:,:) :: vz     ! Pointer to the "VZ"     field in the <volume_field_type> linked list
+    real(kind=RKIND), pointer, dimension(:,:,:) :: vx     ! Pointer to the "VX"     field in the <volume_field_type> linked list
+    real(kind=RKIND), pointer, dimension(:,:,:) :: vy     ! Pointer to the "VY"     field in the <volume_field_type> linked list
+    real(kind=RKIND), pointer, dimension(:,:,:) :: vz     ! Pointer to the "VZ"     field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: fvel     ! Pointer to the "fvel"     field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: velunf_fvel ! Pointer to the "VELUNF" field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: veltru_fvel ! Pointer to the "VELTRU" field in the <volume_field_type> linked list
@@ -3062,9 +3176,9 @@ contains
     uptr => self%point_to_data("U")
     vptr => self%point_to_data("V")
     wptr => self%point_to_data("W")
-    vx   => self%point_to_data("VX")
-    vy   => self%point_to_data("VY")
-    vz   => self%point_to_data("VZ")
+    vx   => self%point_to_data_3D("VX")
+    vy   => self%point_to_data_3D("VY")
+    vz   => self%point_to_data_3D("VZ")
     fvel => self%point_to_data("fvel")
 
     velunf_fvel => self%new_array("VELUNF_FVEL")
@@ -3098,9 +3212,9 @@ contains
 
             ! Compute gate location (relative to aircraft) as an offset from the aircraft in meters.
             r = self%range(igate)
-            x = grid_dx * ( vx(igate,iray) - self%aircraft_xgrid(iray))
-            y = grid_dx * ( vy(igate,iray) - self%aircraft_ygrid(iray))
-            z =             vz(igate,iray) - self%aircraft_z(iray)
+            x = grid_dx * ( vx(1,igate,iray) - self%aircraft_xgrid(iray))
+            y = grid_dx * ( vy(1,igate,iray) - self%aircraft_ygrid(iray))
+            z =             vz(1,igate,iray) - self%aircraft_z(iray)
             !vt = 0.0 ! Until we start considering this.
 
             if (vt >= 0) then
@@ -3224,8 +3338,8 @@ contains
     stdv_vel => self%point_to_data("STDV_VEL")
     do iray = 1, self%nrays
         do igate = 1, self%ngates
-            print *, 'Ray, Gate = ',iray,igate
-            print *, 'VELUNF, STDV = ',velunf(igate,iray),stdv_vel(igate,iray)
+            !print *, 'Ray, Gate = ',iray,igate
+            !print *, 'VELUNF, STDV = ',velunf(igate,iray),stdv_vel(igate,iray)
             !if (abs(stdv_vel(igate,iray)) .eq. 'Infinity') then
             !       stdv_vel(igate,iray) = -9999.
             !       print *, 'STDV= ',stdv_vel(igate,iray)
@@ -3238,7 +3352,7 @@ contains
                     veltru_noise_added(igate,iray) = veltru(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     velunf_fvel_noise_added(igate,iray) = velunf_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     veltru_fvel_noise_added(igate,iray) = veltru_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
-                    print *,'VELUNF_Noise, VELTRU_Noise = ',velunf_noise_added(igate,iray),veltru_noise_added(igate,iray)
+                    !print *,'VELUNF_Noise, VELTRU_Noise = ',velunf_noise_added(igate,iray),veltru_noise_added(igate,iray)
                 endif
             endif
         enddo
@@ -3259,14 +3373,14 @@ contains
         self%nyquist_velocity(iray)   = self%fold_limit_upper
         ! self%unambiguous_range(iray) = 71379.16
         GATE_LOOP : do igate = 1, self%ngates
-            print *, 'RAY, GATE = ', iray, igate
+            !print *, 'RAY, GATE = ', iray, igate
 
             if ( abs(velunf_noise_added(igate,iray)) > 500 ) cycle GATE_LOOP
 
             vel(igate,iray) = velunf(igate,iray)
             vel_noise_added(igate,iray) = velunf_noise_added(igate,iray)! velunf(igate,iray)
-            print *, 'Initial Val: Vel, Vel_noise = ',vel(igate,iray),vel_noise_added(igate,iray)
-            print *, 'Upper fold limit, Lower fold limit: ',self%fold_limit_upper,self%fold_limit_lower
+            !print *, 'Initial Val: Vel, Vel_noise = ',vel(igate,iray),vel_noise_added(igate,iray)
+            !print *, 'Upper fold limit, Lower fold limit: ',self%fold_limit_upper,self%fold_limit_lower
             do k = 1, k_max
                 if ( vel(igate,iray) < self%fold_limit_upper ) exit
                 vel(igate,iray) = self%fold_limit_lower + (vel(igate,iray)-self%fold_limit_upper)
@@ -3487,11 +3601,12 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine compute_snr(self,MDS1km)
+  subroutine compute_snr(self,MDS1km,mdsarr)
     ! Signal-to-Noise Ratio
     implicit none
     class (volume_type) :: self
     real(kind=RKIND), intent(in) :: MDS1km
+    real(kind=RKIND), dimension(:), intent(in) :: mdsarr
     integer :: iray
     integer :: igate
     real(kind=RKIND), pointer, dimension(:,:) :: SNR_zhh  ! Pointer to new field in the <volume_field_type> linked list
@@ -3499,6 +3614,7 @@ contains
     real(kind=RKIND), pointer, dimension(:,:) :: Zhh_attenuated
     real(kind=RKIND), pointer, dimension(:,:) :: Zvv_attenuated
     !real(kind=RKIND), parameter :: MDS1KM = -30.0 ! Minimum detectable signal (dBZ) at 1km
+    real(kind=RKIND), allocatable, dimension(:) :: temporary_MDS
 
     SNR_zhh => self%new_array("SNR_zhh")
     SNR_zvv => self%new_array("SNR_zvv")
@@ -3506,15 +3622,32 @@ contains
     Zhh_attenuated => self%point_to_data("Zhh_attenuated")
     Zvv_attenuated => self%point_to_data("Zvv_attenuated")
 
+    ! Added this section to account for MDS from either the namelist or the scan file
+    ! depending on the user's needs (BWK, 5/18/26)
+
+    allocate(temporary_MDS(self%nrays))
+    
+    
+    if (mdsarr(1) > -1.E36) then
+      temporary_MDS = mdsarr(:)
+      !print *, temporary_MDS
+      print *, 'Using the beam-to-beam MDS as determined by the antenna model...'
+    else
+      temporary_MDS = MDS1km
+      print *, 'Using a single MDS representative of the array from the namelist file...'
+    endif
+
     do iray = 1, self%nrays
         do igate = 1, self%ngates
             if (Zhh_attenuated(igate,iray) > -9999) then
-                SNR_zhh(igate,iray) = Zhh_attenuated(igate,iray) - ( MDS1KM + 20.0*log10( 1.E-3 * self%range(igate) ) )
+                !SNR_zhh(igate,iray) = Zhh_attenuated(igate,iray) - ( MDS1KM + 20.0*log10( 1.E-3 * self%range(igate) ) )
+                SNR_zhh(igate,iray) = Zhh_attenuated(igate,iray) - ( temporary_MDS(iray) + 20.0*log10( 1.E-3 * self%range(igate) ) )
             else
                 SNR_zhh(igate,iray) = -9999.0
             endif
             if (Zvv_attenuated(igate,iray) > -9999) then
-                SNR_zvv(igate,iray) = Zvv_attenuated(igate,iray) - ( MDS1KM + 20.0*log10( 1.E-3 * self%range(igate) ) )
+                !SNR_zvv(igate,iray) = Zvv_attenuated(igate,iray) - ( MDS1KM + 20.0*log10( 1.E-3 * self%range(igate) ) )
+                SNR_zvv(igate,iray) = Zvv_attenuated(igate,iray) - ( temporary_MDS(iray) + 20.0*log10( 1.E-3 * self%range(igate) ) )
             else
                 SNR_zvv(igate,iray) = -9999.0
             endif
@@ -3608,11 +3741,12 @@ contains
                 stdv_Zvv(igate,iray) = 10*log10(1.0+sqrt(YU3_zvv))
                 stdv_Vel(igate,iray) = sqrt(YU4_zhh)
 
-                if (abs(stdv_Vel(igate,iray)) > 200) then
+                !if (abs(stdv_Vel(igate,iray)) > 200) then
+                if (abs(stdv_Vel(igate,iray)) > 50) then
                    stdv_Vel(igate,iray) = -9999.
                 endif 
-               print *, "IGATE, IRAY = ", igate, iray
-               print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
+               !print *, "IGATE, IRAY = ", igate, iray
+               !print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
             endif
         enddo
     enddo

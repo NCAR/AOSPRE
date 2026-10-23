@@ -410,6 +410,7 @@ program extract_apar
            &                 scan%fold_limit_lower, scan%fold_limit_upper,                 &
            &                 metaA%ncid, metaA%list_of_fields(1:metaA%nfields) )
 
+      !print *, 'Meta A list of fields: ', metaA%list_of_fields(1:metaA%nfields)
       if (scan%sweep_count > size(volume%sweep_number)) then
           write(*,'("*** Problem:  sweep_count > max_sweeps:  ", I6, " > ",I6)') scan%sweep_count, size(volume%sweep_number)
           stop "*** increase MAX_SWEEPS in module_cfradial_output"
@@ -511,6 +512,9 @@ program extract_apar
               !call beam_geometry ( aircraft , scan , iray , volume , proj%dx, conf%Theta1, bwtype, options%ref_angle )
               call beam_geometry ( aircraft , scan , iray , volume , mean_dxgeo, conf%Theta1, bwtype, options%ref_angle )
 
+             ! print *, 'Beamwidth type = ',bwtype
+             ! print *, 'Beamwidth H = ',volume%beamwidth_h
+             ! call sleep(10)
               call timer_resume("GATE_LOOP")
               GATE_LOOP : do igate = 1, volume%ngates
 
@@ -533,9 +537,10 @@ program extract_apar
 
               enddo GATE_LOOP
               call timer_pause("GATE_LOOP")
-
+          
           enddo BEAM_LOOP
           call timer_pause("BEAM_LOOP")
+
 
           !
           ! fixed_angle depends on the sweep_mode, and on the coordinate system in use (Z, Y-Prime, etc.)
@@ -599,7 +604,7 @@ program extract_apar
       call timer_resume("PTR_INTERP")
       ptr => volume%next_point ( NULL() )
       do while ( associated ( ptr ) )
-          print *,'Pointer source ',ptr%source
+          !print *,'Pointer source ',ptr%source
           select case ( ptr%source )
           case ( "WRF" )
               call timer_resume("PTRALLOC")
@@ -609,7 +614,7 @@ program extract_apar
                   allocate ( ptr%data ( volume%ngates, volume%nrays ) )
               endif
               call timer_pause("PTRALLOC")
-              print *, 'Field name ',ptr%field_name
+              !print *, 'Field name ',ptr%field_name
               if (ptr%field_name == "U") then
                   continue
               elseif (ptr%field_name == "V") then
@@ -648,7 +653,7 @@ program extract_apar
                   call timer_pause("VARINTERP")
               endif
           end select
-          print *,'Field name ',ptr%field_name
+          !print *,'Field name ',ptr%field_name
           ptr => volume%next_point(ptr)
       enddo
       call timer_pause("PTR_INTERP")
@@ -660,7 +665,8 @@ program extract_apar
       ! Compute Ku at time A
       Kwork => volume%new_array("Ku")
       Kwork2 => volume%point_to_data("U")
-      print *,'Size Kwork2',size(Kwork,2),size(Kwork,1)
+      !print *,'Size Kwork',size(Kwork,2),size(Kwork,1)
+      !print *,'Size Kwork2', size(Kwork2,2),size(Kwork2,1)
       if (bwtype == 0) then
           call metaA%Ku(vx, vy, zindxA, Kwork, Kwork2)
       else
@@ -969,15 +975,15 @@ program extract_apar
       !  Get beamwidth from CRSIM configuration.  Assuming horizontal and vertical beamwidths are the same.
       !
 
-      volume%beamwidth_h = conf%Theta1
-      volume%beamwidth_v = conf%Theta1
+      !volume%beamwidth_h = conf%Theta1
+      !volume%beamwidth_v = conf%Theta1
 
       !
       !  Write some number of scan cycles as a single volume.
       !
 
       if ( mod ( scan%scan_cycle + 1, scan_cycles_per_volume ) == 0 ) then
-          print*, "ICOUNT_end = ",icount
+          !print*, "ICOUNT_end = ",icount
           call timer_resume("CFOUTPUT")
           !print*, "ICOUNT_end = ",icount
           write(outflnm, trim(panel(ipanel)%output_filename_format_string) ) volume%number
@@ -1167,6 +1173,7 @@ subroutine beam_geometry(aircraft, scan, ibeam, volume, grid_dx, theta1, bw_type
       !volume%beamwidth_v( ibeam ) = theta1 + sin(abs(elevation * RAD_PER_DEG))
       volume%beamwidth_h( ibeam ) = bwidthuse_h
       volume%beamwidth_v( ibeam ) = bwidthuse_v
+
   endif
 
   vx   => volume%point_to_data("VX")
@@ -1349,18 +1356,18 @@ subroutine WeightFuncCRS(dxm,dym,dzm,rng,az,el,bwh,bwv,dru,wfr,wf,wgtu)
   !  Radar range, azimuth, and elevation weighting function
   !
 
-  if ((abs(d_r)<=(dru+(0.25*dru))) .and. (abs(d_az)<=(bwh/2.0)+(0.25*bwh/2.0)) .and. (abs(d_el)<=(bwv/2.0)+(0.25*bwv/2.0))) then
+  !if ((abs(d_r)<=(dru+(0.25*dru))) .and. (abs(d_az)<=((bwh/2.0)+(0.25*bwh/2.0))) .and. (abs(d_el)<=((bwv/2.0)+(0.25*bwv/2.0)))) then
       fac=d_r2/(dru*dru)
       Wr = exp(wfr*fac)
       fac=d_az2/(bwh*bwh)
       Wa = exp(wf*fac)
       fac=d_el2/(bwv*bwv) !by oue?
       We = exp(wf*fac)
-  else
-      Wr = 0.e0
-      Wa = 0.e0
-      We = 0.e0
-  endif
+  !else
+  !    Wr = 0.e0
+  !    Wa = 0.e0
+  !    We = 0.e0
+  !endif
 
   wgtu = Wr*Wa*We
 

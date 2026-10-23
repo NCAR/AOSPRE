@@ -8,7 +8,8 @@
  leg_time_seconds = 8
  time_evolution = .TRUE.
 
-  flight_waypoints_x    =       1,     10
+  !flight_waypoints_x    =       1,     10
+  flight_waypoints_x    =       1,     3
   flight_waypoints_y    =     105,    105
   flight_waypoints_vert =    2000,   2000
 
@@ -17,7 +18,7 @@
  air_speed = 120. ! meters per second
  herky_jerky = .FALSE.
 
- bwtype = 0,
+ bwtype = 2,
  ref_angle = 270,
 
 /
@@ -32,6 +33,7 @@
 
  CRSIM_Config = "CONFIG_crsim"
 
+ !!scanning_table = "scanning_test_lhs.txt"
  scanning_table = "scanning_lhs.txt"
  pulse_repetition_frequency     = 2500
  pulses_per_pulse_set           = 2
@@ -47,7 +49,8 @@ skip_seconds_between_scans = 0.0
  ! meters_between_gates           = 75.
  !meters_to_center_of_first_gate = 1.
  !max_range_in_meters            = 75000.
- 
+
+ MDS_1km  = -30.   ! This is the MDS for APAR; If the MDS is unknown, the code will use the APAR value 
 /
 
 &config_output

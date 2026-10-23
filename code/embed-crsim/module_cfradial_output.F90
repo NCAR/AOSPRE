@@ -863,13 +863,15 @@ contains
     !  Radar parameters
     !
 
-    ierr = nf90_def_var ( self%ncid, "radar_beam_width_h", NF90_FLOAT, varid=self%radar_beam_width_h_varid )
+    ierr = nf90_def_var ( self%ncid, "radar_beam_width_h", NF90_FLOAT, dimids=(/time_dimid/), varid=self%radar_beam_width_h_varid, &
+         &                deflate_level=2, shuffle=.true. )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "long_name", "half_power_radar_beam_width_h_channel" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "units", "degrees" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "_FillValue", -9999.0_4 )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "meta_group" , "radar_parameters" )
 
-    ierr = nf90_def_var ( self%ncid, "radar_beam_width_v", NF90_FLOAT, varid=self%radar_beam_width_v_varid )
+    ierr = nf90_def_var ( self%ncid, "radar_beam_width_v", NF90_FLOAT, dimids=(/time_dimid/), varid=self%radar_beam_width_v_varid , &
+         &                deflate_level=2, shuffle=.true. )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_v_varid, "long_name", "half_power_radar_beam_width_v_channel" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_v_varid, "units", "degrees" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_v_varid, "FillValue", -9999.0_4 )
@@ -1908,10 +1910,10 @@ contains
     ierr = nf90_put_var(self%ncid, self%pitch_rate_varid, volume%pitch_rate(1:volume%nrays))
     call error_handler(ierr, "Problem put pitch_rate")
 
-    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_h_varid, volume%beamwidth_h )
+    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_h_varid, volume%beamwidth_h(1:volume%nrays) )
     call error_handler(ierr, "Problem put radar_beam_width_h" )
 
-    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_v_varid, volume%beamwidth_v )
+    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_v_varid, volume%beamwidth_v(1:volume%nrays) )
     call error_handler(ierr, "Problem put radar_beam_width_v" )
 
     if (config_x%output) then
@@ -3171,8 +3173,8 @@ contains
     stdv_vel => self%point_to_data("STDV_VEL")
     do iray = 1, self%nrays
         do igate = 1, self%ngates
-            print *, 'Ray, Gate = ',iray,igate
-            print *, 'VELUNF, STDV = ',velunf(igate,iray),stdv_vel(igate,iray)
+            !print *, 'Ray, Gate = ',iray,igate
+            !print *, 'VELUNF, STDV = ',velunf(igate,iray),stdv_vel(igate,iray)
             !if (abs(stdv_vel(igate,iray)) .eq. 'Infinity') then
             !       stdv_vel(igate,iray) = -9999.
             !       print *, 'STDV= ',stdv_vel(igate,iray)
@@ -3185,7 +3187,7 @@ contains
                     veltru_noise_added(igate,iray) = veltru(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     velunf_fvel_noise_added(igate,iray) = velunf_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     veltru_fvel_noise_added(igate,iray) = veltru_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
-                    print *,'VELUNF_Noise, VELTRU_Noise = ',velunf_noise_added(igate,iray),veltru_noise_added(igate,iray)
+                    !print *,'VELUNF_Noise, VELTRU_Noise = ',velunf_noise_added(igate,iray),veltru_noise_added(igate,iray)
                 endif
             endif
         enddo
@@ -3200,20 +3202,20 @@ contains
     ! Need to compute the k_max based on the Nyquist velocity
     k_tmp = ( -0.3485 * self%fold_limit_upper ) + 21.8725
     k_max = CEILING(k_tmp)
-    print *,'K_tmp, K_max: ',k_tmp,k_max
+    !print *,'K_tmp, K_max: ',k_tmp,k_max
 
     RAY_LOOP : do iray = 1, self%nrays
         self%nyquist_velocity(iray)   = self%fold_limit_upper
         ! self%unambiguous_range(iray) = 71379.16
         GATE_LOOP : do igate = 1, self%ngates
-            print *, 'RAY, GATE = ', iray, igate
+            !print *, 'RAY, GATE = ', iray, igate
 
             if ( abs(velunf_noise_added(igate,iray)) > 500 ) cycle GATE_LOOP
 
             vel(igate,iray) = velunf(igate,iray)
             vel_noise_added(igate,iray) = velunf_noise_added(igate,iray)! velunf(igate,iray)
-            print *, 'Initial Val: Vel, Vel_noise = ',vel(igate,iray),vel_noise_added(igate,iray)
-            print *, 'Upper fold limit, Lower fold limit: ',self%fold_limit_upper,self%fold_limit_lower
+            !print *, 'Initial Val: Vel, Vel_noise = ',vel(igate,iray),vel_noise_added(igate,iray)
+            !print *, 'Upper fold limit, Lower fold limit: ',self%fold_limit_upper,self%fold_limit_lower
             do k = 1, k_max
                 if ( vel(igate,iray) < self%fold_limit_upper ) exit
                 vel(igate,iray) = self%fold_limit_lower + (vel(igate,iray)-self%fold_limit_upper)
@@ -3555,11 +3557,13 @@ contains
                 stdv_Zvv(igate,iray) = 10*log10(1.0+sqrt(YU3_zvv))
                 stdv_Vel(igate,iray) = sqrt(YU4_zhh)
 
-                if (abs(stdv_Vel(igate,iray)) > 200) then
+                if (abs(stdv_Vel(igate,iray)) > 50) then
+                !if (abs(stdv_Vel(igate,iray)) > 900) then
                    stdv_Vel(igate,iray) = -9999.
                 endif 
-               print *, "IGATE, IRAY = ", igate, iray
-               print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
+               !print *, "IGATE, IRAY = ", igate, iray
+               !print *, "L, K, SNR_zhh_lin, SNR_zvv_lin, lambda, PRT = ", L, K, SNR_zhh_lin, SNR_zvv_lin, lambda, pulse_repetition_time 
+               !print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
             endif
         enddo
     enddo

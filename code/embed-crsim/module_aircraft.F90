@@ -350,18 +350,18 @@ contains
         write(*,'("Length of segment from (xm,ym) to (x1,y1) = ", F20.12)') hypot(x1-xm,y1-ym)
         dtA = hypot(x1-xm,y1-ym)/hypot(gvel(1),gvel(2))  ! meters divided by m/s gives us seconds.
         dtB = path_dt-dtA
-        print*, hypot(gvel(1),gvel(2)), 'dtA = ', dtA, dtB, (/xm,ym/) + (/gvel(1),gvel(2)/)*dtA
+        !print*, hypot(gvel(1),gvel(2)), 'dtA = ', dtA, dtB, (/xm,ym/) + (/gvel(1),gvel(2)/)*dtA
 
         !
         !  Compute our new track direction, from (x1,y1) to (x2,y2)
         !
 
-        print*,'x2-x1 = ', x2-x1, x2, x1
-        print*,'y2-y1 = ', y2-y1, y2, y1
+        !print*,'x2-x1 = ', x2-x1, x2, x1
+        !print*,'y2-y1 = ', y2-y1, y2, y1
         new_track = atan2(x2-x1,y2-y1)*DEG_PER_RAD
         new_tmp_track = new_track
         if (new_track<0) new_track = new_track + 360.0
-        print*, 'new track = ', new_track
+        !print*, 'new track = ', new_track
 
         !
         !  Knowing the new track, compute a new headwind from 3d wind at the prior aircraft location.
@@ -831,7 +831,7 @@ contains
     real(kind=RKIND),  parameter :: maxgspeed = 200.0
     real(kind=RKIND) :: xlocation, ylocation
     real(kind=RKIND) :: wrf_output_interval_seconds
-    real(kind=RKIND) :: maxwindow
+    real(kind=RKIND) :: maxwindow   !, maxdist
     real(kind=RKIND) :: xminimum
     real(kind=RKIND) :: xmaximum
     real(kind=RKIND) :: yminimum
@@ -935,10 +935,25 @@ contains
             ! In defining a subset of the full WRF grid to read, assume a maximum ground speed of <maxgspeed> m/s over 
             ! the time period of <wrf_output_interval_seconds>.  Define a square +/- distance of <maxwindow> about the point (xlocation,ylocation).
             maxwindow = 1+(maxgspeed * wrf_output_interval_seconds) / gridspace_dx
+            
+            ! Added by B. Klotz(8/25/26) - prevents large windows
+            !maxdist = 1+(9000. / gridspace_dx) ! 9000 meters on either side of midpoint
+
+            !if ( maxwindow * gridspace_dx > 6000. ) then
+            !    maxwindow = floor(maxdist)
+            !    print *, 'Max window is too large...using the default value...', maxwindow
+            !endif
+
             xminimum = xlocation - maxwindow
             xmaximum = xlocation + maxwindow
             yminimum = ylocation - maxwindow
             ymaximum = ylocation + maxwindow
+
+            !print *, 'Max ground speed: ', maxgspeed
+            !print *, 'WRF Output Interval Sec: ', wrf_output_interval_seconds
+            !print *, 'Max window: ',maxwindow
+            !print *, 'Xlocation, Ylocation: ', xlocation, ylocation
+            !print *, 'Xmin, Xmax, Ymin, Ymax: ', xminimum, xmaximum, yminimum, ymaximum
 
             ! write(*, '("A wrf_file = ", A)') trim(wrf_files(wrf_file_index_A))
             call timer_resume("OpenA")
@@ -950,6 +965,15 @@ contains
         if (time_interpolation_factor < 1) then
             if ( (wrf_files(wrf_file_index(WRFindexB)) /= metaB%flnm) .or. (wrf_time_index(WRFindexB) /= metaB%time_frame)) then
                 maxwindow = 1+(maxgspeed * wrf_output_interval_seconds) / gridspace_dx
+
+                ! Added by B. Klotz(8/25/26) - prevents large windows
+                !maxdist = 1+(9000. / gridspace_dx) ! 9000 meters on either side of midpoint
+
+                !if ( maxwindow * gridspace_dx > 6000. ) then
+                !   maxwindow = floor(maxdist)
+                   !print *, 'Max window is too large...using the default value...', maxwindow
+                !endif
+
                 xminimum = xlocation - maxwindow
                 xmaximum = xlocation + maxwindow
                 yminimum = ylocation - maxwindow
@@ -987,6 +1011,7 @@ contains
 
             xgrid = 1 + (self%location(1) / gridspace_dx)
             ygrid = 1 + (self%location(2) / gridspace_dx)
+            !print *, 'Xgrid, Ygrid, Zgrid = ',xgrid, ygrid, self%location(3)
 
             if (options%flight_level_coordinate == "P") then
                 self%location(3) = metaA%get_z_at_p(xgrid, ygrid, options%waypoint(0)%p_Pa, z_index=zgrid)
@@ -1032,6 +1057,7 @@ contains
 
         xgrid = 1 + (self%location(1) / gridspace_dx)
         ygrid = 1 + (self%location(2) / gridspace_dx)
+        !print *, 'Xgrid_new, Ygrid_new, Tint: ', xgrid, ygrid, time_interpolation_factor
         ! But if we're following a pressure surface, recompute the new Z location at the desired P level.
         if (options%flight_level_coordinate == "P") then
             self%location(3) = metaA%get_z_at_p(xgrid, ygrid, options%waypoint(0)%p_Pa, z_index=zgrid)

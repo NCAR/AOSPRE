@@ -213,6 +213,10 @@ MODULE module_llxy
                                    !  ready for use
       LOGICAL          :: wrap     ! For Gaussian -- flag to indicate wrapping 
                                    !  around globe?
+      LOGICAL         :: projected ! Flag to indicate whether AOSPRE should treat the 
+                                   !  horizontal grid as projected (.TRUE.) or as a 
+                                   !  cartesian coordinate (.FALSE.)
+      REAL(KIND=RKIND)             :: dx_mfac  ! Accounts for slight deviations in actual dx based on map factor (BWK,10/24/2025)
 #ifdef _NOPE_
       REAL(KIND=RKIND), POINTER, DIMENSION(:) :: gauss_lat  ! Latitude array for Gaussian grid
 #endif
@@ -228,7 +232,7 @@ MODULE module_llxy
   
       IMPLICIT NONE
       TYPE(proj_info), INTENT(INOUT)  :: proj
-  
+      proj%code     = -999
       proj%lat1     = -999.9
       proj%lon1     = -999.9
       proj%lat0     = -999.9
@@ -257,6 +261,8 @@ MODULE module_llxy
       proj%re_m     = EARTH_RADIUS_M
       proj%init     = .FALSE.
       proj%wrap     = .FALSE.
+      proj%projected = .FALSE.
+      proj%dx_mfac  = -999.9 ! To account for the Map Factor effect on dx (BWK,10/24/2025)
       proj%rho0     = 0.
       proj%nc       = 0.
       proj%bigc     = 0.
@@ -580,6 +586,7 @@ MODULE module_llxy
      
       END SELECT pick_proj
       proj%init = .TRUE.
+      proj%projected = .TRUE.
 
       RETURN
 
@@ -730,6 +737,8 @@ MODULE module_llxy
       alo1 = (proj%lon1 - reflon) * rad_per_deg
       proj%polei = proj%knowni - proj%rsw * COS(alo1)
       proj%polej = proj%knownj - proj%hemi * proj%rsw * SIN(alo1)
+
+      proj%cone = 1.0
 
       RETURN
 

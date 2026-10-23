@@ -138,7 +138,7 @@ contains
     ! integer :: clock_count_A, clock_count_B, clock_count_rate
 
     ! call system_clock(count=clock_count_A, count_rate=clock_count_rate)
-    ! print*, "CRSIM_WRAPPER"
+     print*, "CRSIM_WRAPPER"
 
     !  Move the call to ReadConfParameters to someplace outside the
     !  crsim wrapper, as it's an initialization step, done once and
@@ -154,8 +154,10 @@ contains
     qgptr    => volume%point_to_data("QGRAUP")
     qnrptr   => volume%point_to_data("QNRAIN")
     qniptr   => volume%point_to_data("QNICE")
-    qnsptr   => volume%point_to_data("QNSNOW")
-    qngptr   => volume%point_to_data("QNGRAUPEL")
+    if (conf%MP_PHYSICS==10) then
+       qnsptr   => volume%point_to_data("QNSNOW")
+       qngptr   => volume%point_to_data("QNGRAUPEL")
+    endif
     qcptr    => volume%point_to_data("QCLOUD")
     !qncptr  => volume%point_to_data("QNCLOUD") ! Added by BWK, 3/8/2022
     !if (conf%MP_PHYSICS==9) then
@@ -237,9 +239,10 @@ contains
 
     rho_ds = -1.E36 ! Not used for Morrison
     
-    ! print *, "NRAYS = ", volume%nrays
+     print *, "NRAYS = ", volume%nrays
     do iray = 1, volume%nrays
         elev = volume%elevation(iray)
+        azim = volume%azimuth(iray)
         elevx = abs(elev)
         IGATE_LOOP : do igate = 1, volume%ngates
 
@@ -270,7 +273,6 @@ contains
             rho_d = rhodptr(igate,iray)  ! Added by BWK, 3/14/2022
             rho_ds = rhodsptr(igate,iray)
             range_m = volume%range(igate)
-            azim = volume%azimuth(igate)
             w_r = radvptr(igate,iray)
             uu = uptr(igate,iray)
             vv = vptr(igate,iray)
@@ -284,7 +286,9 @@ contains
             Kv = Kvptr(igate,iray)
             Kw = Kwptr(igate,iray)
 
-            ! print*, 'sigma_theta = ', conf%sigma_theta, 2.2_8/(4.0_8*sqrt(log(2.0_8)))
+            !print *,'Igate, Iray = ',igate,iray
+
+            ! print*, 'sigma_r, sigma_theta = ', conf%sigma_r,conf%sigma_theta, 2.2_8/(4.0_8*sqrt(log(2.0_8)))
             ! Quick fixes:  1) Convert sigma_theta from degrees to radians.
             !               2) Scale tke by 0.00844 (*very* rough conversion from TKE to energy dissipation rate) per Larry Cornman
             ! call determine_sw_contrib_terms(range_m, elevx, azim, uu, vv, ww, tke, conf%sigma_r, (d2r*conf%sigma_theta), &
@@ -293,6 +297,7 @@ contains
                  &                          Ku, Kv, Kw, &
                  &                          sw_t2, sw_s2, sw_v2)
 
+            !print *, 'Ku, Kv, Kw = ',Ku,Kv,Kw
             if (sw_s2 > 0) then
                 SWsptr(igate,iray)=sqrt(sw_s2)
             endif
@@ -348,16 +353,22 @@ contains
                     endif
                 case(4)
                     qhydro = qsptr(igate,iray) ! qs(i,j,k)
-                    qnhydro = qnsptr(igate,iray) ! qns(i,j,k)
-                    !qnhydro = -9999.9
+                    if (conf%MP_PHYSICS==10) then
+                       qnhydro = qnsptr(igate,iray) ! qns(i,j,k)
+                    else
+                       qnhydro = -9999.9
+                    endif
                     if (qhydro < conf%thr_mix_ratio(iht)) then
                         qhydro = 0.0d0
                         qnhydro = 0.0d0
                     endif
                 case(5)
                     qhydro = qgptr(igate,iray) ! qg(i,j,k)
-                    qnhydro = qngptr(igate,iray) ! qng(i,j,k)
-                    !qnhydro = -9999.9
+                    if (conf%MP_PHYSICS==10) then
+                       qnhydro = qngptr(igate,iray) ! qng(i,j,k)
+                    else
+                       qnhydro = -9999.9
+                    endif
                     if (qhydro < conf%thr_mix_ratio(iht)) then
                         qhydro = 0.0d0
                         qnhydro = 0.0d0
@@ -377,7 +388,8 @@ contains
                 endif
                 
                 !print *, 'Loop indices (Ray, Gate, IHT): ',iray,igate,iht
-
+                !print *, 'Conf: ', conf
+                !print *, 'ELEV, WW, TEMP, RHO_D, RHO_DS, QHYDRO: ', elev, ww, temp, rho_d, rho_ds, qhydro
                 call processing(iht, conf, elev, ww, temp, rho_d, rho_ds, qhydro, qnhydro,         &
                      &          spectra%VNyquist, spectra%NOISE_1km, spectra%NFFT, spectra%Nave,   &
                      &          range_m, w_r, sw_dyn,                                              &
@@ -404,8 +416,10 @@ contains
                 sw_h2 = (sin(elev*d2r)*sin(elev*d2r)) * sum(dDVh,mask=Zhh>Zthr)/Zhhptr(igate,iray)
                 SWtotptr(igate,iray) = sqrt(sw_h2 + sw_t2 + sw_s2 + sw_v2)
                 SWhptr(igate,iray) = sqrt(sw_h2)
-                !print *, "IGATE, IRAY = ", igate, iray
-                !print *, "sw_h2, sw_t2, sw_s2, sw_v2, SWtot = ", sw_h2, sw_t2, sw_s2, sw_v2, SWtotptr(igate,iray)
+                !if (SWtotptr(igate,iray) > 50) then
+                   !print *, "IGATE, IRAY = ", igate, iray
+                   !print *, "sw_h2, sw_t2, sw_s2, sw_v2, SWtot = ", sw_h2, sw_t2, sw_s2, sw_v2, SWtotptr(igate,iray)
+                !endif
                                 
             else
                 zhhptr(igate,iray) = -9999.
@@ -548,8 +562,9 @@ contains
         ldrhptr = -9999.
     endwhere
 
+    print*, "END CRSIM_WRAPPER"
     ! call system_clock(count=clock_count_B)
-    ! write(*,'("done CRSIM_WRAPPER:  ", F9.5, " seconds")') (clock_count_B - clock_count_A) / real(clock_count_rate)
+    !  write(*,'("done CRSIM_WRAPPER:  ", F9.5, " seconds")') (clock_count_B - clock_count_A) / real(clock_count_rate)
   end subroutine crsim_wrapper
 
   !! ----------------------------------------------------------------------------
@@ -7246,8 +7261,20 @@ contains
   Real*8,Parameter  :: aconst=1.6d0 ! a universal dimensionless constant A  between 1.53 and 1.68 in experssion : E(K)= A (tke)^2/3 K (-5/3) 
   real*8            :: aa,cconst,dd,expr
   real*8            :: Kr,Kelev,Kazim !  [1/s]  wind shear terms in radar coordinates
+  real*8            :: Kx_temp,Ky_temp,Kz_temp
+  real*8            :: uu_temp,vv_temp,ww_temp
   real*8            :: vcross  
-     
+
+  ! Assign temp values for Kx, Ky, Kz
+  Kx_temp = Kx
+  Ky_temp = Ky
+  Kz_temp = Kz
+
+  ! Assign temp values for uu, vv, ww
+  uu_temp = uu
+  vv_temp = vv
+  ww_temp = ww
+
     aa=aconst**1.5d0
     cconst=1.d0/0.72
     !
@@ -7268,18 +7295,28 @@ contains
     !
     ! wind shear term
     !
-    Kr    =    Kx*dcos(azim*d2r)*dcos(elev*d2r)     + Ky*dsin(azim*d2r)*dcos(elev*d2r)    + Kz*dsin(elev*d2r)
-    Kelev =    Kx*dcos(azim*d2r)*dsin(elev*d2r)     + Ky*dsin(azim*d2r)*dsin(elev*d2r)    - Kz*dcos(elev*d2r)
+    if (Kx_temp < -9998) Kx_temp = 0.
+    if (Ky_temp < -9998) Ky_temp = 0.
+    if (Kz_temp < -9998) Kz_temp = 0.
+    Kr    =    Kx_temp*dcos(azim*d2r)*dcos(elev*d2r)     + Ky_temp*dsin(azim*d2r)*dcos(elev*d2r)    + Kz_temp*dsin(elev*d2r)
+    Kelev =    Kx_temp*dcos(azim*d2r)*dsin(elev*d2r)     + Ky_temp*dsin(azim*d2r)*dsin(elev*d2r)    - Kz_temp*dcos(elev*d2r)
     !Kazim =  - Kx*dsin(azim*d2r)*dcos(elev*d2r)     + Ky*dcos(azim*d2r)*dcos(elev*d2r)    
-    Kazim =  - Kx*dsin(azim*d2r)                    + Ky*dsin(azim*d2r)
+    Kazim =  - Kx_temp*dsin(azim*d2r)                    + Ky_temp*dsin(azim*d2r)
     !
     sw_s2= (sigma_r*Kr)*(sigma_r*Kr)  +   (sigma_theta*Kelev)*(sigma_theta*Kelev)   +  (sigma_theta*Kazim)*(sigma_theta*Kazim)
     ! 
     ! cross wind term
     !
-    vcross= uu*dcos(azim*d2r)*dsin(elev*d2r) + vv*dsin(azim*d2r)*dsin(elev*d2r) + ww*dcos(elev*d2r)
+    !print *, 'UU, VV, WW = ',uu,vv,ww
+    if (uu_temp < -9998) uu_temp = 0.
+    if (vv_temp < -9998) vv_temp = 0.
+    if (ww_temp < -9998) ww_temp = 0.
+    vcross= uu_temp*dcos(azim*d2r)*dsin(elev*d2r) + vv_temp*dsin(azim*d2r)*dsin(elev*d2r) + ww_temp*dcos(elev*d2r)
     sw_v2= (vcross * sigma_theta) * (vcross * sigma_theta)
     !
+    !print *, 'RR, elev, azim, cos(az), sin(az) = ', rr, elev, azim, dcos(azim*d2r), dsin(azim*d2r)
+    !print *,'Kx,Ky,Kz = ',Kx,Ky,Kz
+    !print *,'Kr, Ke, Ka = ', Kr, Kelev, Kazim
     !print *, "sw_t2, sw_s2, sw_v2 = ", sw_t2, sw_s2, sw_v2
   return
   end subroutine determine_sw_contrib_terms

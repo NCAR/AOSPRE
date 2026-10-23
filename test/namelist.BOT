@@ -49,7 +49,8 @@ skip_seconds_between_scans = 0.0
 !  meters_between_gates           = 75.
 ! meters_to_center_of_first_gate = 1.
 ! max_range_in_meters            = 75000.
- 
+
+ MDS_1km  = -30.   ! This is the MDS for APAR; If the MDS is unknown, the code will use the APAR value 
 /
 
 &config_output

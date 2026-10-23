@@ -2,6 +2,7 @@
 SHELL=/bin/sh
 .SUFFIXES:	
 .SUFFIXES:	.F .o
+.SUFFIXES:  .F90 .o
 OBJS=	extract_apar_wrf.o \
 	module_cfradial_output.o \
 	kwm_date_utilities.o \
@@ -22,24 +23,24 @@ OBJS=	extract_apar_wrf.o \
 	module_timing_utilities.o
 
 #####  GNU  ###################################################################
-LD = gfortran
-FC = gfortran
-FORTRAN_FREEFORM = -ffree-form -ffree-line-length-none
-NETCDF_INC = $(NETCDF)/include
-NETCDF_LIB = $(NETCDF)/lib
-FFLAGS =  -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
-LDLIBS =	-L$(NETCDF_LIB) -lnetcdff
-DEBUG  = 	# -g -C -fbounds-check -O0
+#LD = gfortran
+#FC = gfortran
+#FORTRAN_FREEFORM = -ffree-form -ffree-line-length-none
+#NETCDF_INC = $(NETCDF)/include
+#NETCDF_LIB = $(NETCDF)/lib
+#FFLAGS =  -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
+#LDLIBS =	-L$(NETCDF_LIB) -lnetcdff
+#DEBUG  = 	 -g -C -fbounds-check -O0
 
 #####  GNU + MPI  #############################################################
-# LD = mpif90 
-# FC = mpif90 -D_PARALLEL_
-# FORTRAN_FREEFORM = -ffree-form -ffree-line-length-none
-# NETCDF_INC = $(NETCDF)/include
-# NETCDF_LIB = $(NETCDF)/lib
-# FFLAGS = -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
-# LDLIBS = -L$(NETCDF_LIB) -lnetcdff
-# DEBUG  = # -g -C -fbounds-check -O0
+ LD = mpif90 
+ FC = mpif90 -D_PARALLEL_
+ FORTRAN_FREEFORM = -ffree-form -ffree-line-length-none
+ NETCDF_INC = $(NETCDF)/include
+ NETCDF_LIB = $(NETCDF)/lib
+ FFLAGS = -I$(NETCDF_INC) $(FORTRAN_FREEFORM) -O3
+ LDLIBS = -L$(NETCDF_LIB) -lnetcdff
+ DEBUG  =  -g -C -fbounds-check -O0
 
 #####  Intel  #################################################################
 # LD     = 	ifort
@@ -113,6 +114,9 @@ aospre:	$(OBJS)
 
 .F.o:
 	$(FC) -c $(FFLAGS) $(DEBUG) $(FCPPFLAGS) $*.F
+
+.F90.o:
+	$(FC) -c $(FFLAGS) $(DEBUG) $(FCPPFLAGS) $*.F90
 
 clean:
 	$(RM) *.o *.mod *~ $(CMD)

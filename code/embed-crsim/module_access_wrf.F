@@ -10,6 +10,7 @@ module module_access_wrf
   integer, public, parameter :: MAX_WRF_TIMES = 300
   real(kind=RKIND),parameter :: PI2 = PI*PI
   public :: find_all_wrf_times
+  public :: projection_from_wrf_output
 
   type, public :: waypoint_type
       real(kind=RKIND) :: x_grid   ! x in gridpoint coordinate system, (reference 1)
@@ -124,6 +125,7 @@ contains
     integer,                                                     intent(out) :: idim
     integer,                                                     intent(out) :: jdim
     character(len=1024) :: string
+    character(len=1024) :: file
     integer :: ierr
     integer :: ncid
     integer :: varid
@@ -137,6 +139,13 @@ contains
     character(len=1024) :: xtime_units_string
     integer :: test_index
     integer :: local_conv_minute
+    integer :: io_status, exit_status, cmd_status
+    character(len=256) :: cmd_msg
+    character(len=1024) :: cmd
+    character(len=1) :: dummy
+
+    cmd = "ls -1 "//trim(wrf_glob_pattern)//" > .thing"
+    print *, "COMMAND = ", cmd
 
     wrf_files = " "
     wrf_xtimes = -1.E36
@@ -146,10 +155,33 @@ contains
     wrf_reference_time = " "
     index_count = 0
 
-    call execute_command_line("ls "//trim(wrf_glob_pattern)//" > .thing")
+    print *, "MAX_WRF_FILES = ", MAX_WRF_FILES
+    print *,"WRF Pattern = ", trim(wrf_glob_pattern)
+    call execute_command_line("ls "//trim(wrf_glob_pattern)//" > thing.txt")
+    !write(*,*) 'Press Enter to continue...'
+    !read(*,*) dummy
+    !write(*,*) 'Execution resumed.'
 
-    open(10,file=".thing", status='old', form='formatted', action='read')
+    !call execute_command_line(COMMAND="ls -1 "//trim(wrf_glob_pattern)//" > .thing", EXITSTAT=exit_status, CMDSTAT=cmd_status, CMDMSG=cmd_msg)
+    !call execute_command_line(COMMAND=cmd, EXITSTAT=exit_status, CMDSTAT=cmd_status, CMDMSG=cmd_msg)
+    !print *, "Test output..."
+    !if (cmd_status == 0) then
+    !   print *, "Command executed successfully."
+    !else
+    !   print *, "Error executing command."
+    !   print *, "Error message: ", trim(cmd_msg)
+    !   print *, "Command status code: ", cmd_status   
+    !endif   
+    
+    print *, "Opening file list."
+    open(10,file="thing.txt", status='old', form='formatted', action='read', iostat=io_status)
+    if (io_status /= 0) then
+       print *, "Error opening file = ", file
+       stop
+    endif
+    
     do i = 1, MAX_WRF_FILES
+        !print *, "Loop index = ", i
         read(10,'(A)',end=999) string
         wrf_files(i) = trim(string)
 
@@ -157,9 +189,11 @@ contains
         call error_handler ( ierr , "Problem opening file "//trim(string) )
 
         ierr = nf90_inq_varid ( ncid, "XTIME", varid )
+        !print *, "VARID XTIME = ", varid
         call error_handler ( ierr, "Problem inquiring varid XTIME" )
 
         local_conv_minute = conv_minute
+        !print *, "Local Conv Minute = ", conv_minute
         if (local_conv_minute < 0) then
            ierr = nf90_get_att(ncid, varid, 'units', xtime_units_string)
            call error_handler ( ierr, "Problem getting variabl attribute 'units' for XTIME" )
@@ -254,6 +288,7 @@ contains
     integer :: ierr
     integer :: west_east_dimid, south_north_dimid, bottom_top_dimid, time_dimid
     integer :: south_north_stag_dimid, west_east_stag_dimid, bottom_top_stag_dimid
+    integer :: south_north_stag_len, west_east_stag_len, bottom_top_stag_len    ! Added to work with MPAS data (BWK,8/25/26)
     integer :: varid
     integer :: k
     integer :: nVariables
@@ -262,8 +297,8 @@ contains
     real(kind=RKIND), allocatable, dimension(:,:,:) :: ph
     real(kind=RKIND), allocatable, dimension(:,:,:) :: pb
     character(len=NF90_MAX_NAME) :: varname
-    integer, dimension(NF90_MAX_VAR_DIMS) :: dimid
-    integer :: myrank, ierrmpi, comm, prc
+    integer, dimension(NF90_MAX_VAR_DIMS) :: dimid, dimids_u, dimids_v, dimids_w
+    integer :: myrank, ierrmpi, comm, prc, numdims_u, numdims_v, numdims_w
    
     self%flnm = wrf_filename
     self%time_frame = time_frame
@@ -284,6 +319,10 @@ contains
 
     ierr = nf90_inq_dimid ( self%ncid, "west_east_stag", west_east_stag_dimid )
     call error_handler ( ierr, "Problem inq_dimid for 'west_east_stag'" )
+    ierr = nf90_inquire_dimension ( self%ncid, west_east_stag_dimid, len=west_east_stag_len )
+    call error_handler ( ierr, "Problem inquiring dimension west_east_stag." )
+
+    !print *, 'W-E Stag DIMID = ',west_east_stag_dimid
 
     self%xmin = 1
     self%xmax = self%ni
@@ -295,6 +334,9 @@ contains
 
     ierr = nf90_inq_dimid ( self%ncid, "south_north_stag", south_north_stag_dimid )
     call error_handler ( ierr, "Problem inq_dimid for 'south_north_stag'" )
+    ierr = nf90_inquire_dimension ( self%ncid, south_north_stag_dimid, len=south_north_stag_len )
+    call error_handler ( ierr, "Problem inquiring dimension 'south_north_stag'" )
+    !print *, 'S-N Stag DIMID = ',south_north_stag_dimid
 
     self%ymin = 1
     self%ymax = self%nj
@@ -306,6 +348,9 @@ contains
 
     ierr = nf90_inq_dimid ( self%ncid, "bottom_top_stag", bottom_top_stag_dimid )
     call error_handler ( ierr, "Problem inq_dimid for 'bottom_top_stag_dimid'" )
+    ierr = nf90_inquire_dimension ( self%ncid, bottom_top_stag_dimid, len=bottom_top_stag_len )
+    call error_handler ( ierr, "Problem inquiring dimension 'south_north_stag'" )
+    !print *, 'B-T Stag DIMID = ',bottom_top_stag_dimid
 
     self%zmin = 1
     self%zmax = self%nk
@@ -348,6 +393,7 @@ contains
     do k = 1, self%nk
         self%zh(:,:,k) = 0.5*(self%zf(:,:,k) + self%zf(:,:,k+1))
     enddo
+    !print *, 'Size Zh = ',shape(self%zh)
 
     !
     !  Build pressure field on half levels.
@@ -375,6 +421,7 @@ contains
     ierr = nf90_inquire ( self%ncid, nVariables=nVariables )
     call error_handler ( ierr, "Problem inquiring nVariables" )
 
+    !print *, 'Num Model Variables: ',nVariables
     self%nfields = 0
     do varid = 1, nVariables
         ierr = nf90_inquire_variable ( self%ncid, varid, xtype=xType, name=varname, ndims=nDims, dimids=dimid )
@@ -387,26 +434,53 @@ contains
         if (   dimid(4) /= time_dimid  ) cycle ! Make sure time dimension is as expected
         self%nfields = self%nfields + 1
         self%list_of_fields(self%nfields) = trim(varname)
+        !print *, 'Varid, Field Name = ',varid,trim(varname)
     enddo
 
+    ! Added portions about the U Dimids and the if statement below (BWK, 8/25/26)
     ierr = nf90_inq_varid ( self%ncid, "U", self%varid_u )
     call error_handler ( ierr, "Problem inquiring varid u" )
+    ierr = nf90_inquire_variable(self%ncid, self%varid_u, ndims=numdims_u)
+    call error_handler ( ierr, "Problem inquiring variable u" )
+    ierr = nf90_inquire_variable(self%ncid, self%varid_u, dimids = dimids_u(:numdims_u))
+    call error_handler ( ierr, "Problem inquiring variable u" )
 
     ierr = nf90_inq_varid ( self%ncid, "V", self%varid_v )
     call error_handler ( ierr, "Problem inquiring varid v" )
+    ierr = nf90_inquire_variable(self%ncid, self%varid_v, ndims=numdims_v)
+    call error_handler ( ierr, "Problem inquiring variable v" )
+    ierr = nf90_inquire_variable(self%ncid, self%varid_v, dimids = dimids_v(:numdims_v))
+    call error_handler ( ierr, "Problem inquiring variable v" )
 
     ierr = nf90_inq_varid ( self%ncid, "W", self%varid_w )
     call error_handler ( ierr, "Problem inquiring varid w" )
+    ierr = nf90_inquire_variable(self%ncid, self%varid_w, ndims=numdims_w)
+    call error_handler ( ierr, "Problem inquiring variable w" )
+    ierr = nf90_inquire_variable(self%ncid, self%varid_w, dimids = dimids_w(:numdims_w))
+    call error_handler ( ierr, "Problem inquiring variable w" )
 
-    allocate ( self%u ( self%ni+1, self%nj, self%nk ) )
+    if (dimids_u(1) == west_east_stag_dimid) then
+       allocate ( self%u ( self%ni+1, self%nj, self%nk ) )
+    else
+       allocate ( self%u ( self%ni, self%nj, self%nk ) )
+    endif
     ierr = nf90_get_var ( self%ncid, self%varid_u, self%u, start=(/1,1,1,time_frame/) )
+    !print *, 'SIZE U = ',shape(self%u)
     call error_handler ( ierr, "Problem get_var u" )
 
-    allocate ( self%v ( self%ni, self%nj+1, self%nk ) )
+    if (dimids_v(2) == south_north_stag_dimid) then
+       allocate ( self%v ( self%ni, self%nj+1, self%nk ) )
+    else
+       allocate ( self%v ( self%ni, self%nj, self%nk ) )
+    endif
     ierr = nf90_get_var ( self%ncid, self%varid_v, self%v, start=(/1,1,1,time_frame/) )
     call error_handler ( ierr, "Problem get_var v" )
 
-    allocate ( self%w ( self%ni, self%nj, self%nk+1 ) )
+    if (dimids_w(3) == bottom_top_stag_dimid) then
+       allocate ( self%w ( self%ni, self%nj, self%nk+1 ) )
+    else
+       allocate ( self%w ( self%ni, self%nj, self%nk ) )
+    endif
     ierr = nf90_get_var ( self%ncid, self%varid_w, self%w, start=(/1,1,1,time_frame/) )
     call error_handler ( ierr, "Problem get_var w" )
 
@@ -480,6 +554,7 @@ contains
 
     i1 = max(int(self%xmin), floor(x1))
     i2 = min(int(self%xmax), ceiling(x2))
+    !print *, 'I1, I2 = ',i1,i2
 
     ierr = nf90_inq_dimid ( self%ncid, "south_north", south_north_dimid )
     call error_handler ( ierr, "Problem inq_dimid for 'south_north'" )
@@ -493,6 +568,7 @@ contains
     self%ymax = self%nj
     j1 = max(int(self%ymin), floor(y1))
     j2 = min(int(self%ymax), ceiling(y2))
+    !print *, 'J1, J2 = ',j1,j2
 
     ierr = nf90_inq_dimid ( self%ncid, "bottom_top", bottom_top_dimid )
     call error_handler ( ierr, "Problem inq_dimid for 'bottom_top_dimid'" )
@@ -686,6 +762,7 @@ contains
 
     ! Interpolate z's to a column at x_index, y_index.
 
+    !print *, 'x_index, y_index = ',x_index, y_index
     im = int(x_index)
     ip = im+1
 
@@ -699,12 +776,15 @@ contains
     ya = 1.0-yb
 
     ! Find bracketing indices of z and interpolate.
+    !print *, 'Size Zf, Zh = ', shape(self%zf), shape(self%zh)
     zm = xa*ya*self%zh(im,jm,1) + xa*yb*self%zh(im,jp,1) + xb*ya*self%zh(ip,jm,1) + xb*yb*self%zh(ip,jp,1)
+    !print *, 'IM, IP, JM, JP, ZM, Z: ', im, ip, jm, jp, zm, z 
     if ( zm > z ) return
     KSEEK : do k = 2, self%nk
         zp = xa*ya*self%zh(im,jm,k) + xa*yb*self%zh(im,jp,k) + xb*ya*self%zh(ip,jm,k) + xb*yb*self%zh(ip,jp,k)
         if ( zp > z ) then
             z_index = (k-1) + ( z - zm ) / ( zp - zm )
+            !print *,'ZP, Z_IND: ', zp, z_index
             return
         endif
         zm = zp
@@ -1267,6 +1347,7 @@ contains
     zoffs = 0.5
     do iray = 1, size(x,2)
         do igate = 1, size(x,1)
+            !print *, 'Igate, Iray = ', igate, iray
             if ( z(igate,iray) < -9998 ) cycle
 
             im = int ( x(igate,iray) )
@@ -1319,6 +1400,7 @@ contains
                  &              xb*ya*za*self%zf(ip,jm,km) + xb*ya*zb*self%zf(ip,jm,kp) + &
                  &              xb*yb*za*self%zf(ip,jp,km) + xb*yb*zb*self%zf(ip,jp,kp)
 
+            !print *, 'Kw = ', out_Kw(igate,iray)
         enddo
     enddo
   end subroutine wrf_Kw
@@ -1478,6 +1560,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array, tmp_gate_array_cr, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND) :: xoffs, yoffs, zoffs
     character(len=8) :: stagger
@@ -1775,7 +1858,9 @@ contains
         del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
         do igate = 1, size(x,1)
-            if ( z(igate,iray) < -9998 ) cycle
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(igate,iray) < 1.) .or. (y(igate,iray) < 1.) .or. (z(igate,iray) < 1.)) cycle
+            !if ( z(igate,iray) < -9998 ) cycle
 
             ! Creating new filter to account for the beamwidth (B. Klotz, 12/04/2023)
 
@@ -1790,18 +1875,27 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray)]
+            yv_arr = [y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray)]
+            zv_arr = [z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray)]
 
+            !print *, 'X, Y, Z = ', x(igate,iray), y(igate,iray), z(igate,iray)
+            !print *, 'X_UL, X_UR, X_LR, XLL = ',xv_arr
+            !print *, 'Y_UL, Y_UR, Y_LR, YLL = ',yv_arr
+            !print *, 'Z_UL, Z_UR, Z_LR, ZLL = ',zv_arr
+            
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
@@ -1867,7 +1961,8 @@ contains
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
                    
 
@@ -1925,7 +2020,7 @@ contains
                   !endif
 !
                   !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                    if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
                         zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
@@ -1955,7 +2050,7 @@ contains
             ! This is a similar procedure to the CR-SIM post-processing code
             if (wgt_tot_cr > 0) then
                 out_array(igate,iray) = tmp_gate_array_cr/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_array(igate,iray) = tmp_gate_array/wgt_tot1
             else
                 out_array(igate,iray) = -9999.
@@ -2001,6 +2096,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array_u, tmp_gate_array_Ku,tmp_gate_array_cr_u, tmp_gate_array_cr_Ku, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND)      :: xoffs, yoffs, zoffs
     character(len=8)      :: stagger
@@ -2075,8 +2171,11 @@ contains
         del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
         do igate = 1, size(x,1)
-
+           !print *, 'Ku, igate, iray = ', igate, iray
 ! Creating new filter to account for the beamwidth (B. Klotz, 12/04/2023)
+
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(igate,iray) < 1.) .or. (y(igate,iray) < 1.) .or. (z(igate,iray) < 1.)) cycle
 
             tmp_gate_array_u     = 0.0
             tmp_gate_array_Ku    = 0.0
@@ -2091,23 +2190,34 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray)]
+            yv_arr = [y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray)]
+            zv_arr = [z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray)]
 
+            !print *, 'X, Y, Z = ', x(igate,iray), y(igate,iray), z(igate,iray)
+            !print *, 'X_UL, X_UR, X_LR, XLL = ',xv_arr
+            !print *, 'Y_UL, Y_UR, Y_LR, YLL = ',yv_arr
+            !print *, 'Z_UL, Z_UR, Z_LR, ZLL = ',zv_arr
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
-
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
+            
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
             dy = (int ( maxy + yoffs ) + 1) - (int ( miny + yoffs ) )
             dz = (int ( maxz + zoffs ) + 1) - (int ( minz + zoffs ) )
+
+            !print *, 'Minx, Maxx, Miny, Maxy, Minz, Maxz = ',minx,maxx,miny,maxy,minz,maxz
+            !print *,'Dx, Dy, Dz = ', dx,dy,dz
 
             im = int ( minx + xoffs )
             jm = int ( miny + yoffs )
@@ -2150,7 +2260,8 @@ contains
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
          
 
@@ -2166,7 +2277,7 @@ contains
                              & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
 !
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
                         zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
@@ -2177,9 +2288,13 @@ contains
                         wgt_tot1 = wgt_tot1+wgt_use1
 
                         wgt_tot_cr = wgt_tot_cr+wgt_use_cr
-
+                        !print *, 'igate, iray = ', igate,iray
+                        !print *, 'Ku; im, jm, km = ', im,jm,km
+                        !print *, 'Xgate, Ygate, Zgate = ',int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray))
+                        !print *, 'Uidx, Uigate = ',self%u(im,jm,km),self%u(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
                         dummm = self%u(im,jm,km)-self%u(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
 
+                        !print *, 'Ku dummm = ',dummm
                         tmp_gate_array_Ku = tmp_gate_array_Ku + (wgt_use1*dummm)
                         tmp_gate_array_cr_Ku = tmp_gate_array_cr_Ku + (wgt_use_cr*dummm)
 
@@ -2199,7 +2314,8 @@ contains
             if (wgt_tot_cr > 0) then
                 out_Ku(igate,iray) = (tmp_gate_array_cr_Ku * self%rdx)/wgt_tot_cr
                 out_u(igate,iray)  = (tmp_gate_array_cr_u)/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
+                !print *, 'Wgt_tot1 = ', wgt_tot1
                 out_Ku(igate,iray) = (tmp_gate_array_Ku * self%rdx)/wgt_tot1
                 out_u(igate,iray)  = (tmp_gate_array_u)/wgt_tot1
             else
@@ -2240,6 +2356,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array_v, tmp_gate_array_Kv, tmp_gate_array_cr_v, tmp_gate_array_cr_Kv, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND)      :: xoffs, yoffs, zoffs
     character(len=8)      :: stagger
@@ -2307,6 +2424,8 @@ contains
         del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
         do igate = 1, size(x,1)
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(igate,iray) < 1.) .or. (y(igate,iray) < 1.) .or. (z(igate,iray) < 1.)) cycle
 
             ! Creating new filter to account for the beamwidth
 
@@ -2323,17 +2442,22 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray)]
+            yv_arr = [y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray)]
+            zv_arr = [z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray)]
+
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
@@ -2381,7 +2505,8 @@ contains
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
 
                         if (km < 1 .or. km > self%nk) then
@@ -2395,7 +2520,7 @@ contains
                              & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
 
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
                         zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
@@ -2428,7 +2553,7 @@ contains
             if (wgt_tot_cr > 0) then
                 out_Kv(igate,iray) = (tmp_gate_array_cr_Kv * self%rdy)/wgt_tot_cr
                 out_v(igate,iray)  = (tmp_gate_array_cr_v)/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_Kv(igate,iray) = (tmp_gate_array_Kv * self%rdy)/wgt_tot1
                 out_v(igate,iray)  = (tmp_gate_array_v)/wgt_tot1
             else
@@ -2470,6 +2595,7 @@ contains
     real(kind=RKIND)    :: xa, xb, ya, yb, za, zb, tmp_gate_array_w, tmp_gate_array_Kw, tmp_gate_array_cr_w, tmp_gate_array_cr_Kw, tmp_gate_array_HT, tmp_gate_array_cr_HT, wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND)      :: xoffs, yoffs, zoffs
     character(len=8)      :: stagger
@@ -2538,9 +2664,13 @@ contains
         del2 = (volume%beamwidth_v(iray))*(volume%beamwidth_v(iray))
 
         do igate = 1, size(x,1)
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(igate,iray) < 1.) .or. (y(igate,iray) < 1.) .or. (z(igate,iray) < 1.)) cycle
 
+            !if ( z(igate,iray) < -9998 ) cycle 
             ! Creating new filter to account for the beamwidth (B. Klotz, 12/04/2023)
-
+            !print *, 'Igate, iray, KW = ', igate, iray
+            !print *, 'xgate, ygate, zgate = ', x(igate,iray),y(igate,iray),z(igate,iray)
             tmp_gate_array_w     = 0.0
             tmp_gate_array_Kw    = 0.0
             tmp_gate_array_cr_w  = 0.0
@@ -2554,22 +2684,32 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray)]
+            yv_arr = [y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray)]
+            zv_arr = [z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray)]
+
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !print *, 'Min x, Min y, Min z = ', minx,miny,minz
+            !print *, 'Max x, Max y, Max z = ', maxx,maxy,maxz
+
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) )
             dy = (int ( maxy + yoffs ) + 1) - (int ( miny + yoffs ) )
             dz = (int ( maxz + zoffs ) + 1) - (int ( minz + zoffs ) )
+
+            !print *,'Dx, Dy, Dz = ', dx, dy, dz
 
             im = int ( minx + xoffs )
             jm = int ( miny + yoffs )
@@ -2610,9 +2750,11 @@ contains
                     ya = 1.0 - yb
 
                     DZ_LOOP : do dzl = 1, dz+1
+                    !DZ_LOOP : do dzl = 2, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
 
 
@@ -2627,7 +2769,7 @@ contains
                              & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
 
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
                         zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
@@ -2639,12 +2781,37 @@ contains
 
                         wgt_tot_cr = wgt_tot_cr+wgt_use_cr
 
-                        zfdif = self%zf(im,jm,km)-self%zf(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
+                        !print *, 'im, jm, km', im, jm, km
+                        !print *, 'xa, xb, ya, yb, za, zb = ', xa,xb,ya,yb,za,zb
+
+                        !print *, 'Zf idx, Zf gate = ', self%zf(im,jm,km), self%zf(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
+                        zfdif = (self%zf(im,jm,km))-self%zf(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
+                        !zfdif = (za*self%zf(im,jm,km))-self%zf(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))
+                        !zfdif = self%zf(im,jm,km)-self%zf(im,jm,km-1)
                         !print *,'zfdif:  ',zfdif
-                        if (zfdif <= 0.0) zfdif = 1.0
-                        !dummm = (self%w(im,jm,km)-self%w(x(igate,iray),y(igate,iray),z(igate,iray))) / (self%zf(im,jm,km)-self%zf(x(igate,iray),y(igate,iray),z(igate,iray)))
+                        if (zfdif >= 0. .and. zfdif <= 1.) then
+                            !print *, 'Igate, iray, zfdif = ',igate,iray,zfdif
+                            zfdif = 10.0
+                        endif
+                        if (zfdif < 0. .and. zfdif >= -1.) then
+                            !print *, 'Igate, iray, zfdif = ',igate,iray,zfdif
+                            zfdif = -10.0
+                        endif
+                        !dummm = (self%w(im,jm,km)-self%w(im,jm,km-1)) / zfdif
+                        dummm = (self%w(im,jm,km)-self%w(int(x(igate,iray)),int(y(igate,iray)),int(z(igate,iray)))) / zfdif
                         tmp_gate_array_Kw = tmp_gate_array_Kw + (wgt_use1*dummm)
                         tmp_gate_array_cr_Kw = tmp_gate_array_cr_Kw + (wgt_use_cr*dummm)
+                        
+                        !print *, 'Dummm = ',dummm*zfdif
+                        !print *, 'zfdif = ',zfdif
+                        !print *, 'Wgt1*dummm, tmp_gate_Kw = ', wgt_use1*dummm, tmp_gate_array_Kw
+                        !print *, 'Wgt1 = ',wgt_use1
+                        !print *, 'Wgt1_tot = ',wgt_tot1
+                        !print *, 'Wgt_cr*dummm = ', wgt_use_cr*dummm
+
+                        if (ABS(wgt_use1*dummm) >= 1.) then
+                           !print *, 'Wgt1, Wgt_cr, Dummm, zfdif = ',wgt_use1,wgt_use_cr,dummm
+                        endif
 
                         tmp_gate_array_w = tmp_gate_array_w + (wgt_use1*self%w(im,jm,km))
                         tmp_gate_array_cr_w = tmp_gate_array_cr_w + (wgt_use_cr*self%w(im,jm,km))
@@ -2665,7 +2832,7 @@ contains
                 out_Kw(igate,iray) = (tmp_gate_array_cr_Kw)/wgt_tot_cr
                 out_w(igate,iray)  = (tmp_gate_array_cr_w)/wgt_tot_cr
                 out_HT(igate,iray)  = (tmp_gate_array_cr_HT)/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_Kw(igate,iray) = (tmp_gate_array_Kw)/wgt_tot1
                 out_w(igate,iray)  = (tmp_gate_array_w)/wgt_tot1
                 out_HT(igate,iray)  = (tmp_gate_array_HT)/wgt_tot1
@@ -2675,7 +2842,7 @@ contains
                 out_HT(igate,iray)  = -9999.
             endif
 
-  
+            !print *, 'Kw(location) = ', out_Kw(igate,iray)
         enddo
     enddo
   end subroutine wrf_Kw_varbw
@@ -2711,6 +2878,7 @@ contains
     real(kind=RKIND)    :: wgt_use1, wgt_tot1, wgt_use_cr, wgt_tot_cr
     integer :: ierr, varid, t_varid, p_varid, pb_varid, q_varid, numdims
     integer, dimension(5) :: dims
+    real(kind=RKIND), dimension(4) :: xv_arr, yv_arr, zv_arr
     real(kind=RKIND)      :: maxx, maxy, maxz, minx, miny, minz
     real(kind=RKIND) :: xoffs, yoffs, zoffs
     character(len=8) :: stagger
@@ -2814,7 +2982,9 @@ contains
 
     do iray = 1, size(x,2)
         do igate = 1, size(x,1)
-            if ( z(igate,iray) < -9998 ) cycle
+            ! Check that the gate has a proper index value (> 0)
+            if ((x(igate,iray) < 1.) .or. (y(igate,iray) < 1.) .or. (z(igate,iray) < 1.)) cycle
+            !if ( z(igate,iray) < -9998 ) cycle
 
             tmp_gate_array_rho_d = 0.0
             tmp_gate_array_t = 0.0
@@ -2828,17 +2998,22 @@ contains
             wgt_use_cr = 0.0
             wgt_tot_cr = 0.0
 
+            ! Print the vertex points (indices)
+            xv_arr = [x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray)]
+            yv_arr = [y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray)]
+            zv_arr = [z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray)]
+
             ! Get the minimum and maximum indices in each direction
-            maxx = MAX(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            maxy = MAX(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            maxz = MAX(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            maxx = MAXVAL(xv_arr, MASK = xv_arr > 0.)
+            maxy = MAXVAL(yv_arr, MASK = yv_arr > 0.)
+            maxz = MAXVAL(zv_arr, MASK = zv_arr > 0.)
 
-            minx = MIN(x_ul(igate,iray),x_ur(igate,iray),x_lr(igate,iray),x_ll(igate,iray))
-            miny = MIN(y_ul(igate,iray),y_ur(igate,iray),y_lr(igate,iray),y_ll(igate,iray))
-            minz = MIN(z_ul(igate,iray),z_ur(igate,iray),z_lr(igate,iray),z_ll(igate,iray))
+            minx = MINVAL(xv_arr, MASK = xv_arr > 0.)
+            miny = MINVAL(yv_arr, MASK = yv_arr > 0.)
+            minz = MINVAL(zv_arr, MASK = zv_arr > 0.)
 
-            if (minz < 0) minz = 1
-            if (maxz < 0) maxz = 1
+            !if (minz < 0) minz = 1
+            !if (maxz < 0) maxz = 1
 
             ! Distance in grid points between max and min positions
             dx = (int ( maxx + xoffs ) + 1) - (int ( minx + xoffs ) ) + 3
@@ -2890,7 +3065,8 @@ contains
                     DZ_LOOP : do dzl = 1, dz+1
 
                         if (dzl .eq. 1) then
-                            km = int (z(igate,iray) + zoffs)
+                            !km = int (z(igate,iray) + zoffs)
+                            km = int (minz + zoffs)
                         endif
          
 
@@ -2906,7 +3082,7 @@ contains
                              & volume%elevation(iray),volume%beamwidth_h(iray),volume%beamwidth_v(iray),dr,wfacr,wfac,wgt_use_cr)
         
                         !wgt_use_cr = Wr*Wa*We
-                        if (wgt_use_cr<=1.e-5) wgt_use_cr=0.e0
+                        if (ABS(wgt_use_cr)<=1.e-5) wgt_use_cr=0.e0
 
                         zb = ABS( (z(igate,iray) + zoffs) - km) / (dz)
                         za = 1.0 - zb
@@ -2941,7 +3117,7 @@ contains
                 out_RHO_d(igate,iray)  = tmp_gate_array_cr_rho_d/wgt_tot_cr
                 out_RHO_ds(igate,iray) = tmp_gate_array_cr_rho_ds/wgt_tot_cr
                 out_T(igate,iray)      = tmp_gate_array_cr_t/wgt_tot_cr
-            elseif (wgt_tot_cr <=0 .and. wgt_tot1 > 0) then
+            elseif (wgt_tot_cr <=0 .and. wgt_tot1 /= 0) then
                 out_RHO_d(igate,iray)  = tmp_gate_array_rho_d/wgt_tot1
                 out_RHO_ds(igate,iray) = tmp_gate_array_rho_ds/wgt_tot1
                 out_T(igate,iray)      = tmp_gate_array_t/wgt_tot1
@@ -3049,6 +3225,219 @@ contains
          xb*yb*za*self%w(ip,jp,km) + xb*yb*zb*self%w(ip,jp,kp)
 
   end subroutine wrf_value
+
+!---------------------------------------------------------------------------------------------
+!---------------------------------------------------------------------------------------------
+
+  subroutine projection_from_wrf_output(wrf_file, options, proj, mean_dx_geo)
+    use netcdf, only : NF90_NOWRITE
+    use netcdf, only : NF90_NOERR
+    use netcdf, only : NF90_GLOBAL
+    use netcdf, only : nf90_open
+    use netcdf, only : nf90_close
+    use netcdf, only : nf90_get_att
+    use netcdf, only : nf90_inq_varid
+    use netcdf, only : nf90_get_var
+    use netcdf, only : nf90_inquire_dimension
+    use netcdf, only : nf90_inquire_variable
+    use netcdf, only : nf90_inq_dimid
+    use netcdf, only : nf90_inquire
+
+    use module_llxy, only : proj_info
+    use module_llxy, only : PROJ_LC
+    use module_llxy, only : PROJ_PS
+    use module_llxy, only : PROJ_MERC
+    use module_llxy, only : map_init
+    use module_llxy, only : map_set
+    use module_llxy, only : latlon_to_ij
+
+    implicit none
+    character(len=*), intent(in) :: wrf_file
+    type(options_type), intent(in) :: options
+    type(proj_info), intent(out) :: proj
+    real(kind=RKIND), allocatable, dimension(:,:) :: mapfac_m
+
+    integer :: ncid, lat_dimid, nlat, nlon, west_east_dimid, south_north_dimid, numdims
+    integer :: ierr
+    integer :: varid, ii
+
+    integer :: map_proj ! 1=Lambert Conformal; 2=Polar Stereographic; 3=Mercator
+    real(kind=RKIND)    :: truelat1
+    real(kind=RKIND)    :: truelat2
+    real(kind=RKIND)    :: lat1
+    real(kind=RKIND)    :: lon1
+    real(kind=RKIND)    :: stdlon
+    real(kind=RKIND)    :: dx
+    real(kind=RKIND)    ::  knowni
+    real(kind=RKIND)    ::  knownj
+    real, dimension(1) :: dummy1
+    real(kind=RKIND),   allocatable, dimension(:,:)   :: mapfac  
+    real(kind=RKIND),   allocatable, dimension(:,:)   :: dx_geo
+
+    integer    ::  wpt_len  ! Number of waypoints
+    integer    ::  min_wpt_x, max_wpt_x, min_wpt_y, max_wpt_y  ! X, Y max and min values (in grid index)
+    real(kind=RKIND), intent(out)    ::  mean_dx_geo
+
+    ! Added in the flight waypoints from the namelist file (BWK, 4/8/26)
+    ! The purpose is to determine the extent of the x,y grid we are using
+    ! Then determine the mean dx_geo over that grid. We can use this as 
+    ! a proxy for the individual points. Maybe in the future this can
+    ! be done on a pt-by-pt basis, but for now, it is not necessary.
+
+    ! Compute min, max x waypoints
+    wpt_len = SIZE(int(options%waypoint%x_grid))
+
+    min_wpt_x = int(options%waypoint(0)%x_grid)
+    max_wpt_x = int(options%waypoint(0)%x_grid)
+    min_wpt_y = int(options%waypoint(0)%y_grid)
+    max_wpt_y = int(options%waypoint(0)%y_grid)
+
+    do ii = 1, wpt_len-1
+        min_wpt_x = min(min_wpt_x, int(options%waypoint(ii)%x_grid))
+        max_wpt_x = max(max_wpt_x, int(options%waypoint(ii)%x_grid))
+        min_wpt_y = min(min_wpt_y, int(options%waypoint(ii)%y_grid))
+        max_wpt_y = max(max_wpt_y, int(options%waypoint(ii)%y_grid))
+    end do
+    print *, 'Min, Max waypoints in X then Y = ',min_wpt_x,max_wpt_x,min_wpt_y,max_wpt_y
+
+    call map_init(proj)
+    print *, "Opening WRF file..."
+    ierr = nf90_open(trim(wrf_file), NF90_NOWRITE, ncid)
+    call error_handler ( ierr , "Problem opening file "//trim(wrf_file) )
+
+    ierr = nf90_inq_varid (ncid, "XLAT", varid )
+    !print *,'varid = ',varid
+    call error_handler(ierr, "Problem inquire varid for XLAT" )
+   ! ierr = nf90_inq_dimid (ncid, "XLAT", lat_dimid )
+   ! print *, 'lat_dimid = ',lat_dimid
+   ! call error_handler(ierr, "Problem inquire dimension for XLAT" )
+   ! ierr = nf90_inquire_dimension ( ncid, lat_dimid, len = nlat )
+   ! call error_handler ( ierr, "Problem inquiring dimension west_east." )
+
+      ierr = nf90_get_var(ncid, varid, dummy1, start=(/1,1,1/), count=(/1,1,1/))
+      call error_handler(ierr, "Problem getting corner latitude")
+      print*, 'lat1 = ', dummy1
+      lat1 = dummy1(1)
+
+      ierr = nf90_inq_varid (ncid, "XLONG", varid )
+      call error_handler(ierr, "Problem inquire varid for XLONG" )
+   ! ierr = nf90_inq_dimid (ncid, "XLONG", lat_dimid )
+   ! call error_handler(ierr, "Problem inquire dimension for XLONG" )
+   ! ierr = nf90_inquire_dimension ( ncid, lat_dimid, len = nlon )
+   ! call error_handler ( ierr, "Problem inquiring dimension south_north." )
+
+      ierr = nf90_inq_dimid ( ncid, "west_east", west_east_dimid )
+      call error_handler ( ierr, "Problem inq_dimid for 'west_east'" )
+      ierr = nf90_inquire_dimension ( ncid, west_east_dimid, len=nlon )
+      call error_handler ( ierr, "Problem inquiring dimension west_east." )
+
+      ierr = nf90_inq_dimid ( ncid, "south_north", south_north_dimid )
+      call error_handler ( ierr, "Problem inq_dimid for 'south_north'" )
+      ierr = nf90_inquire_dimension ( ncid, south_north_dimid, len=nlat )
+      call error_handler ( ierr, "Problem inquiring dimension south_north." )
+
+       print *, "NLAT, NLON = ", nlat, nlon
+
+      ierr = nf90_inq_varid (ncid, "XLONG", varid )
+      call error_handler(ierr, "Problem inquire varid for XLONG" )
+      ierr = nf90_get_var(ncid, varid, dummy1, start=(/1,1,1/), count=(/1,1,1/))
+      call error_handler(ierr, "Problem getting corner longitude")
+      print*, 'lon1 = ', dummy1
+      lon1 = dummy1(1)
+    
+      ierr = nf90_get_att(ncid, NF90_GLOBAL, "DX", dx)
+      call error_handler ( ierr , "Problem getting DX attribute from file "//trim(wrf_file) )
+      print *, "DX = ",dx
+
+      allocate ( dx_geo ( nlon, nlat ) )
+
+    ierr = nf90_get_att(ncid, NF90_GLOBAL, "MAP_PROJ", map_proj)
+    print *, "MAP_PROJ = ", map_proj
+    if (.not. (ierr == NF90_NOERR)) then
+        dx_geo = dx
+        mean_dx_geo = dx
+        !mean_dx_geo = sum(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y)) / size(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+        print *, 'Mean DX_GEO= ',mean_dx_geo
+        ierr = nf90_close(ncid)
+        call error_handler ( ierr , "Problem closing file "//trim(wrf_file) )
+        return
+    else
+
+       ierr = nf90_get_att(ncid, NF90_GLOBAL, "TRUELAT1", truelat1)
+       print *, 'TRUELAT = ',truelat1
+       call error_handler ( ierr , "Problem getting TRUELAT1 attribute from file "//trim(wrf_file) )
+
+      ierr = nf90_inq_varid (ncid, "MAPFAC_M", varid )    ! Reading the map factor (BWK, 10/24/2025)
+      print *, 'VARID = ', varid
+      call error_handler(ierr, "Problem inquire varid for MAPFAC_M" )
+      ierr = nf90_inquire_variable (ncid, varid, ndims=numdims)    ! Reading the map factor (BWK, 10/24/2025)
+      call error_handler(ierr, "Problem inquire varid for MAPFAC_M" )
+      print *, numdims
+
+      allocate ( mapfac ( nlon, nlat ) )
+      !print *, 'SIZE= ',SHAPE(mapfac)
+      !print *, varid
+      ierr = nf90_get_var(ncid, varid, mapfac, start = (/1,1/), count = (/nlon, nlat/))
+    ! Reading the map factor (BWK, 10/24/2025)
+      call error_handler(ierr, "Problem get varid for MAPFAC_M" )
+      print *, RANK(mapfac)
+
+    ! Compute dx_geo
+      dx_geo = dx/mapfac(:,:)
+      !print *, 'SIZE = ', size(dx_geo)
+      !mean_dx_geo = dx
+      !print *, "SUM DX_GEO = ", sum(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+      !print *, "SIZE DX_GEO = ", size(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+      
+      mean_dx_geo = sum(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y)) / size(dx_geo(min_wpt_x:max_wpt_x,min_wpt_y:max_wpt_y))
+      print *, 'Mean DX_GEO= ',mean_dx_geo
+    !print *, "Shape MAPFACT = ", shape(mapfac)
+    !print *, "Shape DX_GEO = ", shape(dx_geo)
+    !print *, mapfac(1,1), dx_geo(1,1)
+
+      select case (map_proj)
+      case (PROJ_LC)
+
+        ierr = nf90_get_att(ncid, NF90_GLOBAL, "TRUELAT2", truelat2)
+        call error_handler ( ierr , "Problem getting TRUELAT2 attribute from file "//trim(wrf_file) )
+
+        ierr = nf90_get_att(ncid, NF90_GLOBAL, "STAND_LON", stdlon)
+        call error_handler ( ierr , "Problem getting STAND_LON attribute from file "//trim(wrf_file) )
+
+        knowni = 1.0
+        knownj = 1.0
+        call map_set(PROJ_LC, proj, truelat1=truelat1, truelat2=truelat2, lat1=lat1, lon1=lon1, knowni=knowni, knownj=knownj, stdlon=stdlon, dx=dx)
+        print*, "cone factor = ", proj%cone
+
+        !print *,"MAPFACT= ",proj%dx_mfac
+
+      case (PROJ_PS)
+
+        ierr = nf90_get_att(ncid, NF90_GLOBAL, "STAND_LON", stdlon)
+        call error_handler ( ierr , "Problem getting STAND_LON attribute from file "//trim(wrf_file) )
+
+        knowni = 1.0
+        knownj = 1.0
+        call map_set(PROJ_PS, proj, truelat1=truelat1, lat1=lat1, lon1=lon1, knowni=knowni, knownj=knownj, stdlon=stdlon, dx=dx)
+        print*, "cone factor = ", proj%cone
+
+      case (PROJ_MERC)
+
+        knowni = 1.0
+        knownj = 1.0
+        call map_set(PROJ_MERC, proj, truelat1=truelat1, lat1=lat1, lon1=lon1, knowni=knowni, knownj=knownj, dx=dx)
+        print*, "cone factor = ", proj%cone
+
+      case default
+        write(*,'("Unrecognized map projection: MAP_PROJ attribute = ", I6)') map_proj
+        write(*,'("   Only Lambert Conformal, Polar Stereographic, and Mercator projections are supported")')
+        stop
+      end select
+
+      ierr = nf90_close(ncid)
+      call error_handler ( ierr , "Problem closing file "//trim(wrf_file) )
+    endif
+  end subroutine projection_from_wrf_output
 
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------

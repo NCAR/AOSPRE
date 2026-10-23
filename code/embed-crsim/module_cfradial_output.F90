@@ -73,6 +73,7 @@ module module_cfradial_output
   type(config_output_type) :: config_WRF_HT
   type(config_output_type) :: config_WRF_RHO_D
   type(config_output_type) :: config_WRF_RHO_DS ! Added by BWK, 3/14/2022
+  type(config_output_type) :: config_WRF_QVAPOR ! Added by BWK, 8/12/2025
   type(config_output_type) :: config_WRF_QCLOUD
   type(config_output_type) :: config_WRF_QRAIN
   type(config_output_type) :: config_WRF_QICE
@@ -106,59 +107,48 @@ module module_cfradial_output
       integer :: ngates
       integer :: sweep
 
-      ! Original version - static beamwidth that wasn't actually getting used
-      ! Edited by B. Klotz (11/29/23)
-
-      !real(kind=RKIND)    :: beamwidth_h
-      !real(kind=RKIND)    :: beamwidth_v
-
-      !
-      real(kind=RKIND)    :: fold_limit_lower
-      real(kind=RKIND)    :: fold_limit_upper
-      integer,           dimension(MAX_SWEEPS) :: sweep_number
-      character(len=32), dimension(MAX_SWEEPS) :: sweep_mode
-      real(kind=RKIND),              dimension(MAX_SWEEPS) :: fixed_angle
-      integer,           dimension(MAX_SWEEPS) :: sweep_start_ray_index
-      integer,           dimension(MAX_SWEEPS) :: sweep_end_ray_index
-      character(len=19) :: time_coverage_start
-      character(len=19) :: time_coverage_end
-      character(len=19) :: reference_time
-      integer           :: start_time_integer_seconds
-      real(kind=RKIND), dimension(MAX_RAYS)  :: time
-      real(kind=RKIND), dimension(MAX_NGATES) :: range
-      real(kind=RKIND), dimension(MAX_RAYS)  :: latitude
-      real(kind=RKIND), dimension(MAX_RAYS)  :: longitude
-      real(kind=RKIND), dimension(MAX_RAYS)  :: altitude
-      real(kind=RKIND), dimension(MAX_RAYS)  :: azimuth
-      real(kind=RKIND), dimension(MAX_RAYS)  :: elevation
-      integer, dimension(MAX_RAYS)  :: georefs_applied
-      real(kind=RKIND), dimension(MAX_RAYS)  :: heading
-      real(kind=RKIND), dimension(MAX_RAYS)  :: roll
-      real(kind=RKIND), dimension(MAX_RAYS)  :: pitch
-      real(kind=RKIND), dimension(MAX_RAYS)  :: drift
-      real(kind=RKIND), dimension(MAX_RAYS)  :: rotation
-      real(kind=RKIND), dimension(MAX_RAYS)  :: tilt
-
-      ! Part of edit above from 11/29/23 (B. Klotz)
-      real(kind=RKIND), dimension(MAX_RAYS)  :: beamwidth_h
-      real(kind=RKIND), dimension(MAX_RAYS)  :: beamwidth_v
-
-      ! End edit (B. Klotz, 11/29/23)
+      real(kind=RKIND)               :: fold_limit_lower
+      real(kind=RKIND)               :: fold_limit_upper
+      integer,           allocatable :: sweep_number(:)
+      character(len=32), allocatable :: sweep_mode(:)
+      real(kind=RKIND),  allocatable :: fixed_angle(:)
+      integer,           allocatable :: sweep_start_ray_index(:)
+      integer,           allocatable :: sweep_end_ray_index(:)
+      character(len=19)              :: time_coverage_start
+      character(len=19)              :: time_coverage_end
+      character(len=19)              :: reference_time
+      integer                        :: start_time_integer_seconds
+      real(kind=RKIND),  allocatable :: range(:)
+      real(kind=RKIND),  allocatable :: time(:)
+      real(kind=RKIND),  allocatable :: latitude(:)
+      real(kind=RKIND),  allocatable :: longitude(:)
+      real(kind=RKIND),  allocatable :: altitude(:)
+      real(kind=RKIND),  allocatable :: azimuth(:)
+      real(kind=RKIND),  allocatable :: elevation(:)
+      integer,           allocatable :: georefs_applied(:)
+      real(kind=RKIND),  allocatable :: heading(:)
+      real(kind=RKIND),  allocatable :: roll(:)
+      real(kind=RKIND),  allocatable :: pitch(:)
+      real(kind=RKIND),  allocatable :: drift(:)
+      real(kind=RKIND),  allocatable :: rotation(:)
+      real(kind=RKIND),  allocatable :: tilt(:)
+      real(kind=RKIND),  allocatable :: beamwidth_h(:)
+      real(kind=RKIND),  allocatable :: beamwidth_v(:)
 
       ! "instrument_parameters" meta_group
-      real(kind=RKIND), dimension(MAX_RAYS)  :: nyquist_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: unambiguous_range
+      real(kind=RKIND), allocatable :: nyquist_velocity(:)
+      real(kind=RKIND), allocatable :: unambiguous_range(:)
 
       ! "platform_velocity" meta_group
-      real(kind=RKIND), dimension(MAX_RAYS)  :: eastward_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: northward_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: vertical_velocity
-      real(kind=RKIND), dimension(MAX_RAYS)  :: eastward_wind
-      real(kind=RKIND), dimension(MAX_RAYS)  :: northward_wind
-      real(kind=RKIND), dimension(MAX_RAYS)  :: vertical_wind
-      real(kind=RKIND), dimension(MAX_RAYS)  :: heading_rate
-      real(kind=RKIND), dimension(MAX_RAYS)  :: roll_rate
-      real(kind=RKIND), dimension(MAX_RAYS)  :: pitch_rate
+      real(kind=RKIND), allocatable :: eastward_velocity(:)
+      real(kind=RKIND), allocatable :: northward_velocity(:)
+      real(kind=RKIND), allocatable :: vertical_velocity(:)
+      real(kind=RKIND), allocatable :: eastward_wind(:)
+      real(kind=RKIND), allocatable :: northward_wind(:)
+      real(kind=RKIND), allocatable :: vertical_wind(:)
+      real(kind=RKIND), allocatable :: heading_rate(:)
+      real(kind=RKIND), allocatable :: roll_rate(:)
+      real(kind=RKIND), allocatable :: pitch_rate(:)
 
       ! "geometry_correction" meta_group
       real(kind=RKIND) :: azimuth_correction = 0.0
@@ -179,9 +169,9 @@ module module_cfradial_output
       real(kind=RKIND) :: tilt_correction = 0.0
 
       ! other variables needed for each beam, but not necessarily output in the CFRadial files.
-      real(kind=RKIND), dimension(MAX_RAYS)  :: aircraft_xgrid
-      real(kind=RKIND), dimension(MAX_RAYS)  :: aircraft_ygrid
-      real(kind=RKIND), dimension(MAX_RAYS)  :: aircraft_z
+      real(kind=RKIND), allocatable :: aircraft_xgrid(:)
+      real(kind=RKIND), allocatable :: aircraft_ygrid(:)
+      real(kind=RKIND), allocatable :: aircraft_z(:)
 
     contains
       procedure :: initialize_new_field => volume_initialize_new_field
@@ -394,6 +384,7 @@ contains
          &                  config_WRF_HT,         &
          &                  config_WRF_RHO_D,      &
          &                  config_WRF_RHO_DS,     &   ! Added by BWK, 3/14/2022
+         &                  config_WRF_QVAPOR,     &   ! Added by BWK, 8/12/2025
          &                  config_WRF_QCLOUD,     &
          &                  config_WRF_QRAIN,      &
          &                  config_WRF_QICE,       &
@@ -872,13 +863,15 @@ contains
     !  Radar parameters
     !
 
-    ierr = nf90_def_var ( self%ncid, "radar_beam_width_h", NF90_FLOAT, varid=self%radar_beam_width_h_varid )
+    ierr = nf90_def_var ( self%ncid, "radar_beam_width_h", NF90_FLOAT, dimids=(/time_dimid/), varid=self%radar_beam_width_h_varid, &
+         &                deflate_level=2, shuffle=.true. )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "long_name", "half_power_radar_beam_width_h_channel" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "units", "degrees" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "_FillValue", -9999.0_4 )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_h_varid, "meta_group" , "radar_parameters" )
 
-    ierr = nf90_def_var ( self%ncid, "radar_beam_width_v", NF90_FLOAT, varid=self%radar_beam_width_v_varid )
+    ierr = nf90_def_var ( self%ncid, "radar_beam_width_v", NF90_FLOAT, dimids=(/time_dimid/), varid=self%radar_beam_width_v_varid , &
+         &                deflate_level=2, shuffle=.true. )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_v_varid, "long_name", "half_power_radar_beam_width_v_channel" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_v_varid, "units", "degrees" )
     ierr = nf90_put_att ( self%ncid, self%radar_beam_width_v_varid, "FillValue", -9999.0_4 )
@@ -1529,6 +1522,7 @@ contains
             if ( ptr%field_name == "U"           .and. .not. config_WRF_U%output ) cycle
             if ( ptr%field_name == "V"           .and. .not. config_WRF_V%output ) cycle
             if ( ptr%field_name == "W"           .and. .not. config_WRF_W%output ) cycle
+            if ( ptr%field_name == "QVAPOR"      .and. .not. config_WRF_QVAPOR%output ) cycle ! Added by BWK, 8/12/2025
             if ( ptr%field_name == "QCLOUD"      .and. .not. config_WRF_QCLOUD%output ) cycle
             if ( ptr%field_name == "QRAIN"       .and. .not. config_WRF_QRAIN%output ) cycle
             if ( ptr%field_name == "QICE"        .and. .not. config_WRF_QICE%output ) cycle
@@ -1600,16 +1594,31 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine write_volume ( self , volume , primary_axis )
+  subroutine write_volume ( self , volume , primary_axis, proj )
     use netcdf, only : nf90_put_var
     use kwm_date_utilities, only : geth_newdate
+    use module_llxy, only : proj_info
+    use module_llxy, only : PROJ_LC
+    use module_llxy, only : PROJ_PS
+    use module_llxy, only : PROJ_MERC
     implicit none
     class (cfradial_type), intent(inout) :: self
     type(volume_type), target :: volume
     character(len=*), intent(in) :: primary_axis
+    type(proj_info), intent(in) :: proj
     integer :: ierr
     type(volume_field_type), pointer :: ptr
     real(kind=RKIND), pointer, dimension(:,:) :: arr
+
+    integer :: k
+    real(kind=RKIND) :: rotang
+    real(kind=RKIND), allocatable, dimension(:) :: workspace
+    real(kind=RKIND), allocatable, dimension(:) :: alpha
+    real(kind=RKIND), allocatable, dimension(:) :: sinalpha
+    real(kind=RKIND), allocatable, dimension(:) :: cosalpha
+    real(kind=RKIND), allocatable, dimension(:) :: utrue
+    real(kind=RKIND), allocatable, dimension(:) :: vtrue
+    
     ! print*, 'BEGIN write volume'
 
     ierr = nf90_put_var(self%ncid, self%volume_number_varid, volume%number)
@@ -1691,8 +1700,31 @@ contains
     ierr = nf90_put_var(self%ncid, self%sweep_end_ray_index_varid, volume%sweep_end_ray_index(1:volume%sweep))
     call error_handler(ierr, "Problem put sweep_end_ray_index")
 
-    ierr = nf90_put_var(self%ncid, self%azimuth_varid, volume%azimuth(1:volume%nrays))
-    call error_handler(ierr, "Problem put azimuth")
+    if (proj%projected) then
+        !  Since azimuth is relative to true north, for projected WRF data we need to rotate
+        !  azimuth angles from grid-relative azimuth to true azimuth
+
+        select case (proj%code)
+        case (PROJ_PS, PROJ_LC)
+            ! Angle from north depends on cone factor and the difference between longitude and the standard longitude (proj%stdlon).
+            allocate(workspace(volume%nrays))
+            do k = 1, volume%nrays
+                rotang = proj%hemi * (volume%longitude(k)-proj%stdlon) * proj%cone
+                workspace(k) = mod(volume%azimuth(k) + rotang + 720, 360.0)
+            enddo
+            ierr = nf90_put_var(self%ncid, self%azimuth_varid, workspace)
+            call error_handler(ierr, "Problem put azimuth")
+            deallocate(workspace)
+        case (PROJ_MERC)
+            ! No rotation of angles needed for Mercator projections
+            ierr = nf90_put_var(self%ncid, self%azimuth_varid, volume%azimuth(1:volume%nrays))
+            call error_handler(ierr, "Problem put azimuth")
+        end select
+    else
+        ierr = nf90_put_var(self%ncid, self%azimuth_varid, volume%azimuth(1:volume%nrays))
+        call error_handler(ierr, "Problem put azimuth")
+    endif
+    
 
     ierr = nf90_put_var(self%ncid, self%elevation_varid, volume%elevation(1:volume%nrays))
     call error_handler(ierr, "Problem put elevation")
@@ -1700,8 +1732,30 @@ contains
     ierr = nf90_put_var(self%ncid, self%georefs_applied_varid, volume%georefs_applied(1:volume%nrays))
     call error_handler(ierr, "Problem put georefs_applied")
 
-    ierr = nf90_put_var(self%ncid, self%heading_varid, volume%heading(1:volume%nrays))
-    call error_handler(ierr, "Problem put heading")
+    if (proj%projected) then
+        !  Since heading is relative to true north, for projected WRF data we need to rotate
+        !  heading angles from grid-relative azimuth to true heading
+
+        select case (proj%code)
+        case (PROJ_PS, PROJ_LC)
+            ! Angle from north depends on cone factor and the difference between longitude and the standard longitude (proj%stdlon).
+            allocate(workspace(volume%nrays))
+            do k = 1, volume%nrays
+                rotang = proj%hemi * (volume%longitude(k)-proj%stdlon) * proj%cone
+                workspace(k) = mod(volume%heading(k) + rotang + 720, 360.0)
+            enddo
+            ierr = nf90_put_var(self%ncid, self%heading_varid, workspace)
+            call error_handler(ierr, "Problem put heading")
+            deallocate(workspace)
+        case (PROJ_MERC)
+            ! No rotation of angles needed for Mercator projection
+            ierr = nf90_put_var(self%ncid, self%heading_varid, volume%heading(1:volume%nrays))
+            call error_handler(ierr, "Problem put heading")
+        end select
+    else
+        ierr = nf90_put_var(self%ncid, self%heading_varid, volume%heading(1:volume%nrays))
+        call error_handler(ierr, "Problem put heading")
+    endif
 
     ierr = nf90_put_var(self%ncid, self%roll_varid, volume%roll(1:volume%nrays))
     call error_handler(ierr, "Problem put roll")
@@ -1776,20 +1830,73 @@ contains
 
     !
 
-    ierr = nf90_put_var(self%ncid, self%eastward_velocity_varid, volume%eastward_velocity(1:volume%nrays))
-    call error_handler(ierr, "Problem put eastward_velocity")
+    if (proj%projected) then
+        select case (proj%code)
+        case (PROJ_PS, PROJ_LC)
+            allocate(alpha(1:volume%nrays))
+            allocate(cosalpha(1:volume%nrays))
+            allocate(sinalpha(1:volume%nrays))
+            allocate(utrue(1:volume%nrays))
+            allocate(vtrue(1:volume%nrays))
+            alpha = proj%hemi * (volume%longitude(1:volume%nrays)-proj%stdlon) * proj%cone
+            cosalpha = cos(alpha)
+            sinalpha = sin(alpha)
+            utrue = volume%eastward_velocity(1:volume%nrays)*cosalpha - volume%northward_velocity(1:volume%nrays)*sinalpha
+            vtrue = volume%northward_velocity(1:volume%nrays)*cosalpha + volume%eastward_velocity(1:volume%nrays)*sinalpha
+        
+            ierr = nf90_put_var(self%ncid, self%eastward_velocity_varid, utrue)
+            call error_handler(ierr, "Problem put eastward_velocity")
 
-    ierr = nf90_put_var(self%ncid, self%northward_velocity_varid, volume%northward_velocity(1:volume%nrays))
-    call error_handler(ierr, "Problem put northward_velocity")
+            ierr = nf90_put_var(self%ncid, self%northward_velocity_varid, vtrue)
+            call error_handler(ierr, "Problem put northward_velocity")
+            deallocate(utrue, vtrue, alpha)
+            ! keep cosalpha and sinalpha for use below
+        case(PROJ_MERC)
+            ! No rotation of angles needed for Mercator projection
+            ierr = nf90_put_var(self%ncid, self%eastward_velocity_varid, volume%eastward_velocity(1:volume%nrays))
+            call error_handler(ierr, "Problem put eastward_velocity")
+
+            ierr = nf90_put_var(self%ncid, self%northward_velocity_varid, volume%northward_velocity(1:volume%nrays))
+            call error_handler(ierr, "Problem put northward_velocity")
+        end select
+    else
+        ierr = nf90_put_var(self%ncid, self%eastward_velocity_varid, volume%eastward_velocity(1:volume%nrays))
+        call error_handler(ierr, "Problem put eastward_velocity")
+
+        ierr = nf90_put_var(self%ncid, self%northward_velocity_varid, volume%northward_velocity(1:volume%nrays))
+        call error_handler(ierr, "Problem put northward_velocity")
+    endif
 
     ierr = nf90_put_var(self%ncid, self%vertical_velocity_varid, volume%vertical_velocity(1:volume%nrays))
     call error_handler(ierr, "Problem put vertical_velocity")
 
-    ierr = nf90_put_var(self%ncid, self%eastward_wind_varid, volume%eastward_wind(1:volume%nrays))
-    call error_handler(ierr, "Problem put eastward_wind")
+    if (proj%projected) then
+        select case (proj%code)
+        case (PROJ_PS, PROJ_LC)
+            allocate(utrue(1:volume%nrays))
+            allocate(vtrue(1:volume%nrays))
+            utrue = volume%eastward_wind(1:volume%nrays)*cosalpha - volume%northward_wind(1:volume%nrays)*sinalpha
+            vtrue = volume%northward_wind(1:volume%nrays)*cosalpha + volume%eastward_wind(1:volume%nrays)*sinalpha
 
-    ierr = nf90_put_var(self%ncid, self%northward_wind_varid, volume%northward_wind(1:volume%nrays))
-    call error_handler(ierr, "Problem put northward_wind")
+            ierr = nf90_put_var(self%ncid, self%eastward_wind_varid, utrue)
+            call error_handler(ierr, "Problem put eastward_wind")
+
+            ierr = nf90_put_var(self%ncid, self%northward_wind_varid, vtrue)
+            call error_handler(ierr, "Problem put northward_wind")
+        case (PROJ_MERC)
+            ierr = nf90_put_var(self%ncid, self%eastward_wind_varid, volume%eastward_wind(1:volume%nrays))
+            call error_handler(ierr, "Problem put eastward_wind")
+
+            ierr = nf90_put_var(self%ncid, self%northward_wind_varid, volume%northward_wind(1:volume%nrays))
+            call error_handler(ierr, "Problem put northward_wind")
+        end select
+    else
+        ierr = nf90_put_var(self%ncid, self%eastward_wind_varid, volume%eastward_wind(1:volume%nrays))
+        call error_handler(ierr, "Problem put eastward_wind")
+
+        ierr = nf90_put_var(self%ncid, self%northward_wind_varid, volume%northward_wind(1:volume%nrays))
+        call error_handler(ierr, "Problem put northward_wind")
+    endif
 
     ierr = nf90_put_var(self%ncid, self%vertical_wind_varid, volume%vertical_wind(1:volume%nrays))
     call error_handler(ierr, "Problem put vertical_wind")
@@ -1803,10 +1910,10 @@ contains
     ierr = nf90_put_var(self%ncid, self%pitch_rate_varid, volume%pitch_rate(1:volume%nrays))
     call error_handler(ierr, "Problem put pitch_rate")
 
-    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_h_varid, volume%beamwidth_h )
+    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_h_varid, volume%beamwidth_h(1:volume%nrays) )
     call error_handler(ierr, "Problem put radar_beam_width_h" )
 
-    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_v_varid, volume%beamwidth_v )
+    ierr = nf90_put_var ( self%ncid, self%radar_beam_width_v_varid, volume%beamwidth_v(1:volume%nrays) )
     call error_handler(ierr, "Problem put radar_beam_width_v" )
 
     if (config_x%output) then
@@ -2269,6 +2376,42 @@ contains
     type(volume_field_type), pointer :: ptr
     integer :: i
 
+    allocate(volume_initialize%sweep_number(MAX_SWEEPS))
+    allocate(volume_initialize%sweep_mode(MAX_SWEEPS))
+    allocate(volume_initialize%fixed_angle(MAX_SWEEPS))
+    allocate(volume_initialize%sweep_start_ray_index(MAX_SWEEPS))
+    allocate(volume_initialize%sweep_end_ray_index(MAX_SWEEPS))
+    allocate(volume_initialize%range(MAX_NGATES))
+    allocate(volume_initialize%time(MAX_RAYS))
+    allocate(volume_initialize%latitude(MAX_RAYS))
+    allocate(volume_initialize%longitude(MAX_RAYS))
+    allocate(volume_initialize%altitude(MAX_RAYS))
+    allocate(volume_initialize%azimuth(MAX_RAYS))
+    allocate(volume_initialize%elevation(MAX_RAYS))
+    allocate(volume_initialize%georefs_applied(MAX_RAYS))
+    allocate(volume_initialize%heading(MAX_RAYS))
+    allocate(volume_initialize%roll(MAX_RAYS))
+    allocate(volume_initialize%pitch(MAX_RAYS))
+    allocate(volume_initialize%drift(MAX_RAYS))
+    allocate(volume_initialize%rotation(MAX_RAYS))
+    allocate(volume_initialize%tilt(MAX_RAYS))
+    allocate(volume_initialize%beamwidth_h(MAX_RAYS))
+    allocate(volume_initialize%beamwidth_v(MAX_RAYS))
+    allocate(volume_initialize%nyquist_velocity(MAX_RAYS))
+    allocate(volume_initialize%unambiguous_range(MAX_RAYS))
+    allocate(volume_initialize%eastward_velocity(MAX_RAYS))
+    allocate(volume_initialize%northward_velocity(MAX_RAYS))
+    allocate(volume_initialize%vertical_velocity(MAX_RAYS))
+    allocate(volume_initialize%eastward_wind(MAX_RAYS))
+    allocate(volume_initialize%northward_wind(MAX_RAYS))
+    allocate(volume_initialize%vertical_wind(MAX_RAYS))
+    allocate(volume_initialize%heading_rate(MAX_RAYS))
+    allocate(volume_initialize%roll_rate(MAX_RAYS))
+    allocate(volume_initialize%pitch_rate(MAX_RAYS))
+    allocate(volume_initialize%aircraft_xgrid(MAX_RAYS))
+    allocate(volume_initialize%aircraft_ygrid(MAX_RAYS))
+    allocate(volume_initialize%aircraft_z(MAX_RAYS))
+
     ! write(*,'("VOLUME_INITIALIZE: address: ",I20)') loc(volume_initialize)
     volume_initialize%number = number
     volume_initialize%ngates = int ( ceiling ( scan_max_range_in_meters / scan_meters_between_gates ) )
@@ -2330,7 +2473,7 @@ contains
         ! if ( list1(i) == "QICE" ) cycle
         ! if ( list1(i) == "QRAIN" ) cycle
         ! if ( list1(i) == "QCLOUD" ) cycle
-        if ( list1(i) == "QVAPOR" ) cycle
+        !if ( list1(i) == "QVAPOR" ) cycle
         if ( list1(i) == "P_HYD" ) cycle
 
         call volume_initialize%initialize_new_field ( ncid1  , list1(i) )
@@ -2346,7 +2489,8 @@ contains
     ! call volume%initialize_new_field ( -9999  , "PRESSURE",    source="WRF", description = "Pressure",            units = "Pa" )
     call volume_initialize%initialize_new_field ( -9999  , "HT",      source="WRF", &
          &                             description = "Geopotential Height", units = "m" )
-
+   
+    print*, "END VOLUME INITIALIZE"
   end function volume_initialize
 
 !---------------------------------------------------------------------------------------------
@@ -2988,6 +3132,8 @@ contains
     integer :: iray
     integer :: igate
     integer :: k
+    integer :: k_max = 10
+    real(kind=RKIND) :: k_tmp    ! Added as part of the computation of k_max
     real(kind=RKIND) :: rn_draw
 
     if ( self%fold_limit_lower < -1.E4 ) return
@@ -3027,13 +3173,21 @@ contains
     stdv_vel => self%point_to_data("STDV_VEL")
     do iray = 1, self%nrays
         do igate = 1, self%ngates
+            !print *, 'Ray, Gate = ',iray,igate
+            !print *, 'VELUNF, STDV = ',velunf(igate,iray),stdv_vel(igate,iray)
+            !if (abs(stdv_vel(igate,iray)) .eq. 'Infinity') then
+            !       stdv_vel(igate,iray) = -9999.
+            !       print *, 'STDV= ',stdv_vel(igate,iray)
+            !endif 
+
             if (velunf(igate,iray) > -9999) then
-                if ( (stdv_vel(igate,iray) > -9999) .and. (SNR_zhh(igate,iray) > snr_mask_threshold) ) then
+                if ( (stdv_vel(igate,iray) > -9999.) .and. (SNR_zhh(igate,iray) > snr_mask_threshold) ) then
                     rn_draw = random_normal()
                     velunf_noise_added(igate,iray) = velunf(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     veltru_noise_added(igate,iray) = veltru(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     velunf_fvel_noise_added(igate,iray) = velunf_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
                     veltru_fvel_noise_added(igate,iray) = veltru_fvel(igate,iray) + stdv_vel(igate,iray) * rn_draw
+                    !print *,'VELUNF_Noise, VELTRU_Noise = ',velunf_noise_added(igate,iray),veltru_noise_added(igate,iray)
                 endif
             endif
         enddo
@@ -3045,47 +3199,60 @@ contains
     veltruf_fvel => self%new_array("VELTRUF_FVEL")
     veltruf_fvel = -9999.
 
+    ! Need to compute the k_max based on the Nyquist velocity
+    k_tmp = ( -0.3485 * self%fold_limit_upper ) + 21.8725
+    k_max = CEILING(k_tmp)
+    !print *,'K_tmp, K_max: ',k_tmp,k_max
+
     RAY_LOOP : do iray = 1, self%nrays
         self%nyquist_velocity(iray)   = self%fold_limit_upper
         ! self%unambiguous_range(iray) = 71379.16
         GATE_LOOP : do igate = 1, self%ngates
+            !print *, 'RAY, GATE = ', iray, igate
 
-            if ( abs(velunf_noise_added(igate,iray)) > 9998 ) cycle GATE_LOOP
+            if ( abs(velunf_noise_added(igate,iray)) > 500 ) cycle GATE_LOOP
 
             vel(igate,iray) = velunf(igate,iray)
             vel_noise_added(igate,iray) = velunf_noise_added(igate,iray)! velunf(igate,iray)
-
-            do k = 1, 10
+            !print *, 'Initial Val: Vel, Vel_noise = ',vel(igate,iray),vel_noise_added(igate,iray)
+            !print *, 'Upper fold limit, Lower fold limit: ',self%fold_limit_upper,self%fold_limit_lower
+            do k = 1, k_max
                 if ( vel(igate,iray) < self%fold_limit_upper ) exit
                 vel(igate,iray) = self%fold_limit_lower + (vel(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf = ', velunf(igate,iray)
                     stop "A) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
+             !   print *, 'k, Vel = ', k, vel(igate,iray)
+             !   print *, 'Lower limit = ', self%fold_limit_lower
                 if ( vel(igate,iray) > self%fold_limit_lower ) exit
                 vel(igate,iray) = self%fold_limit_upper + (vel(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf = ', velunf(igate,iray)
                     stop "B) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
+             !   print *, 'k, Vel_Noise = ', k, vel_noise_added(igate,iray)
+             !   print *, 'Upper limit = ', self%fold_limit_upper
                 if ( vel_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 vel_noise_added(igate,iray) = self%fold_limit_lower + (vel_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf_noise_added = ', velunf_noise_added(igate,iray)
                     stop "C) Fold?"
                 endif
             enddo
             
-            do k = 1, 10
+            do k = 1, k_max
+              !   print *, 'k, Vel_Noise = ',k,vel_noise_added(igate,iray)
+              !  print *, 'Lower limit = ', self%fold_limit_lower
                 if ( vel_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 vel_noise_added(igate,iray) = self%fold_limit_upper + (vel_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'velunf_noise_added = ', velunf_noise_added(igate,iray)
                     stop "D) Fold?"
                 endif
@@ -3098,73 +3265,73 @@ contains
             veltruf_fvel(igate,iray) = veltru_fvel(igate,iray)
             veltruf_fvel_noise_added(igate,iray) = veltru_noise_added(igate,iray)
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf(igate,iray) < self%fold_limit_upper ) exit
                 veltruf(igate,iray) = self%fold_limit_lower + (veltruf(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru = ', veltru(igate,iray)
                     stop "C) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf(igate,iray) > self%fold_limit_lower ) exit
                 veltruf(igate,iray) = self%fold_limit_upper + (veltruf(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru = ', veltru(igate,iray)
                     stop "D) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_noise_added(igate,iray) = self%fold_limit_lower + (veltruf_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_noise_added = ', veltru_noise_added(igate,iray)
                     stop "E) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 veltruf_noise_added(igate,iray) = self%fold_limit_upper + (veltruf_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_noise_added = ', veltru_noise_added(igate,iray)
                     stop "F) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_fvel(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_fvel(igate,iray) = self%fold_limit_lower + (veltruf_fvel(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_fvel = ', veltru_fvel(igate,iray)
                     stop "G) Fold?"
                 endif
             enddo
 
-            !do k = 1, 10
+            !do k = 1, k_max
             !    if ( veltruf_fvel(igate,iray) > self%fold_limit_lower ) exit
             !    veltruf_fvel(igate,iray) = self%fold_limit_upper + (veltruf_fvel(igate,iray)-self%fold_limit_lower)
-            !    if (k==10) then
+            !    if (k==k_max) then
             !        print*, 'veltru_fvel = ', veltru_fvel(igate,iray)
             !        stop "H) Fold?"
             !    endif
             !enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_fvel_noise_added(igate,iray) < self%fold_limit_upper ) exit
                 veltruf_fvel_noise_added(igate,iray) = self%fold_limit_lower + (veltruf_fvel_noise_added(igate,iray)-self%fold_limit_upper)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_fvel_noise_added = ', veltru_fvel_noise_added(igate,iray)
                     stop "I) Fold?"
                 endif
             enddo
 
-            do k = 1, 10
+            do k = 1, k_max
                 if ( veltruf_fvel_noise_added(igate,iray) > self%fold_limit_lower ) exit
                 veltruf_fvel_noise_added(igate,iray) = self%fold_limit_upper + (veltruf_fvel_noise_added(igate,iray)-self%fold_limit_lower)
-                if (k==10) then
+                if (k==k_max) then
                     print*, 'veltru_fvel_noise_added = ', veltru_fvel_noise_added(igate,iray)
                     stop "J) Fold?"
                 endif
@@ -3269,17 +3436,18 @@ contains
 !---------------------------------------------------------------------------------------------
 !---------------------------------------------------------------------------------------------
 
-  subroutine compute_snr(self)
+  subroutine compute_snr(self,MDS1km)
     ! Signal-to-Noise Ratio
     implicit none
     class (volume_type) :: self
+    real(kind=RKIND), intent(in) :: MDS1km
     integer :: iray
     integer :: igate
     real(kind=RKIND), pointer, dimension(:,:) :: SNR_zhh  ! Pointer to new field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: SNR_zvv  ! Pointer to new field in the <volume_field_type> linked list
     real(kind=RKIND), pointer, dimension(:,:) :: Zhh_attenuated
     real(kind=RKIND), pointer, dimension(:,:) :: Zvv_attenuated
-    real(kind=RKIND), parameter :: MDS1KM = -30.0 ! Minimum detectable signal (dBZ) at 1km
+    !real(kind=RKIND), parameter :: MDS1KM = -30.0 ! Minimum detectable signal (dBZ) at 1km
 
     SNR_zhh => self%new_array("SNR_zhh")
     SNR_zvv => self%new_array("SNR_zvv")
@@ -3388,8 +3556,14 @@ contains
                 stdv_Zhh(igate,iray) = 10*log10(1.0+sqrt(YU3_zhh))
                 stdv_Zvv(igate,iray) = 10*log10(1.0+sqrt(YU3_zvv))
                 stdv_Vel(igate,iray) = sqrt(YU4_zhh)
-                !print *, "IGATE, IRAY = ", igate, iray
-                !print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
+
+                if (abs(stdv_Vel(igate,iray)) > 50) then
+                !if (abs(stdv_Vel(igate,iray)) > 900) then
+                   stdv_Vel(igate,iray) = -9999.
+                endif 
+               !print *, "IGATE, IRAY = ", igate, iray
+               !print *, "L, K, SNR_zhh_lin, SNR_zvv_lin, lambda, PRT = ", L, K, SNR_zhh_lin, SNR_zvv_lin, lambda, pulse_repetition_time 
+               !print *, "SWtot, rho, stdv_Zhh, stdv_Zvv, stdv_Vel = ", SWtot(igate,iray), rho, stdv_Zhh(igate,iray),stdv_Zvv(igate,iray),stdv_Vel(igate,iray)
             endif
         enddo
     enddo

@@ -61,12 +61,6 @@ following line to my .bashrc file:
 
 export LD_LIBRARY_PATH={Enter path to NetCDF lib/ directory}
 
-There can also be memory issues, so I also add: ulimit -s unlimited
-to the .bashrc file. This is acceptable for linux systems, but
-MacOS has a hard cap on the stack size. The command thus changes
-to ulimit -s 65520. With this in mind, it might be beneficial to
-for MacOS to run cases that do not require much memory.
-
 The AOSPRE runs in a bash shell using Fortran as its main programming
 language. Ensure that you have the GNU Fortran compiler installed.
 For Linux, this should be installed automatically, but its always good
